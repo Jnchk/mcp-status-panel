@@ -25,6 +25,8 @@ struct Config {
     releases_url: String,
     always_on_top: bool,
     font: String,
+    tray: bool,
+    taskbar: bool,
     interval: Duration,
 }
 
@@ -40,6 +42,8 @@ impl Default for Config {
             releases_url: "https://api.github.com/repos/anomalyco/opencode/releases?per_page=40".into(),
             always_on_top: true,
             font: "Consolas".into(),
+            tray: true,
+            taskbar: false,
             interval: Duration::from_secs(30),
         }
     }
@@ -80,6 +84,8 @@ impl Config {
                 "releases_url" => config.releases_url = value,
                 "always_on_top" => config.always_on_top = matches!(value.as_str(), "true" | "1" | "yes"),
                 "font" => config.font = value,
+                "tray" => config.tray = matches!(value.as_str(), "true" | "1" | "yes"),
+                "taskbar" => config.taskbar = matches!(value.as_str(), "true" | "1" | "yes"),
                 "interval_secs" => {
                     if let Ok(secs) = value.parse::<u64>() {
                         config.interval = Duration::from_secs(secs.max(5));
@@ -165,11 +171,14 @@ fn main() -> eframe::Result {
     let worker_refresh = refresh.clone();
     let always_on_top = config.always_on_top;
     let font = config.font.clone();
+    let tray_enabled = config.tray;
+    let taskbar = if cfg!(windows) { config.taskbar } else { true };
     thread::spawn(move || worker(config, tx, worker_refresh));
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([560.0, 430.0])
-        .with_min_inner_size([360.0, 240.0]);
+        .with_min_inner_size([360.0, 240.0])
+        .with_taskbar(taskbar);
     if always_on_top {
         viewport = viewport.with_always_on_top();
     }
@@ -180,7 +189,14 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             install_font(&cc.egui_ctx, &font);
             orange_theme(&cc.egui_ctx);
-            Ok(Box::new(App { rx, refresh, snapshot: None }))
+            Ok(Box::new(App {
+                rx,
+                refresh,
+                snapshot: None,
+                visible: true,
+                quitting: false,
+                tray: make_tray(tray_enabled),
+            }))
         }),
     )
 }
@@ -385,11 +401,31 @@ struct App {
     rx: Receiver<Snapshot>,
     refresh: Arc<AtomicBool>,
     snapshot: Option<Snapshot>,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    visible: bool,
+    quitting: bool,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    tray: TraySlot,
 }
 
 impl eframe::App for App {
     fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
         visuals.panel_fill.to_normalized_gamma_f32()
+    }
+
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.request_repaint_after(Duration::from_millis(500));
+        #[cfg(windows)]
+        self.poll_tray(ctx);
+
+        if ctx.input(|i| i.viewport().close_requested()) {
+            if self.quitting {
+                return;
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.visible = false;
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -482,6 +518,116 @@ impl eframe::App for App {
                 ui.add_space(8.0);
             });
     }
+}
+
+impl App {
+    #[cfg(windows)]
+    fn toggle_visibility(&mut self, ctx: &egui::Context) {
+        self.visible = !self.visible;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(self.visible));
+        if self.visible {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+    }
+
+    #[cfg(windows)]
+    fn poll_tray(&mut self, ctx: &egui::Context) {
+        let (show_id, quit_id) = match &self.tray {
+            Some(tray) => (tray.show_id.clone(), tray.quit_id.clone()),
+            None => return,
+        };
+
+        while let Ok(event) = tray_icon::TrayIconEvent::receiver().try_recv() {
+            if let tray_icon::TrayIconEvent::Click {
+                button: tray_icon::MouseButton::Left,
+                button_state: tray_icon::MouseButtonState::Up,
+                ..
+            } = event
+            {
+                self.toggle_visibility(ctx);
+            }
+        }
+
+        while let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
+            if event.id == show_id {
+                self.toggle_visibility(ctx);
+            } else if event.id == quit_id {
+                self.quitting = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+struct Tray {
+    _icon: tray_icon::TrayIcon,
+    show_id: tray_icon::menu::MenuId,
+    quit_id: tray_icon::menu::MenuId,
+}
+
+#[cfg(windows)]
+type TraySlot = Option<Tray>;
+#[cfg(not(windows))]
+type TraySlot = ();
+
+fn make_tray(enabled: bool) -> TraySlot {
+    #[cfg(windows)]
+    {
+        if enabled { create_tray() } else { None }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = enabled;
+        ()
+    }
+}
+
+#[cfg(windows)]
+fn create_tray() -> Option<Tray> {
+    use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
+
+    let show = MenuItem::new("Show / Hide", true, None);
+    let quit = MenuItem::new("Quit", true, None);
+    let menu = Menu::new();
+    menu.append(&show).ok()?;
+    menu.append(&PredefinedMenuItem::separator()).ok()?;
+    menu.append(&quit).ok()?;
+
+    let icon = tray_icon::Icon::from_rgba(tray_icon_rgba(), 32, 32).ok()?;
+    let icon = tray_icon::TrayIconBuilder::new()
+        .with_menu(Box::new(menu))
+        .with_menu_on_left_click(false)
+        .with_tooltip("Status Panel")
+        .with_icon(icon)
+        .build()
+        .ok()?;
+
+    Some(Tray {
+        _icon: icon,
+        show_id: show.id().clone(),
+        quit_id: quit.id().clone(),
+    })
+}
+
+#[cfg(windows)]
+fn tray_icon_rgba() -> Vec<u8> {
+    const SIZE: u32 = 32;
+    let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as f32 - 15.5;
+            let dy = y as f32 - 15.5;
+            if (dx * dx + dy * dy).sqrt() <= 15.0 {
+                let index = ((y * SIZE + x) * 4) as usize;
+                rgba[index] = 234;
+                rgba[index + 1] = 88;
+                rgba[index + 2] = 12;
+                rgba[index + 3] = 255;
+            }
+        }
+    }
+    rgba
 }
 
 fn card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {

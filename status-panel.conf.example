@@ -11,4 +11,8 @@ releases_url=https://api.github.com/repos/anomalyco/opencode/releases?per_page=4
 always_on_top=true
 # any font file name found in the system font directory; Consolas on Windows
 font=Consolas
+# tray icon; closing the window hides instead of quitting, Quit is in the tray menu
+tray=true
+# show the app button in the Windows taskbar
+taskbar=false
 interval_secs=30
