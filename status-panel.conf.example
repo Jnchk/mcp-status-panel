@@ -1,0 +1,7 @@
+# status-panel configuration, read from the working directory or beside the exe.
+gateway_url=http://<host>:8930/status
+gateway_token=<token from opencode cli.json mcp-gateway-status plugin>
+opencode_url=http://<host>:10240/api/experimental/session/stats?tools=none&timezone=Asia/Shanghai
+opencode_user=opencode
+opencode_password=<OPENCODE_PASSWORD from serve.env>
+interval_secs=30
