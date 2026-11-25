@@ -23,6 +23,8 @@ struct Config {
     opencode_password: String,
     tls_insecure: bool,
     releases_url: String,
+    always_on_top: bool,
+    font: String,
     interval: Duration,
 }
 
@@ -36,6 +38,8 @@ impl Default for Config {
             opencode_password: String::new(),
             tls_insecure: false,
             releases_url: "https://api.github.com/repos/anomalyco/opencode/releases?per_page=40".into(),
+            always_on_top: true,
+            font: "Consolas".into(),
             interval: Duration::from_secs(30),
         }
     }
@@ -74,6 +78,8 @@ impl Config {
                 "opencode_password" => config.opencode_password = value,
                 "tls_insecure" => config.tls_insecure = matches!(value.as_str(), "true" | "1" | "yes"),
                 "releases_url" => config.releases_url = value,
+                "always_on_top" => config.always_on_top = matches!(value.as_str(), "true" | "1" | "yes"),
+                "font" => config.font = value,
                 "interval_secs" => {
                     if let Ok(secs) = value.parse::<u64>() {
                         config.interval = Duration::from_secs(secs.max(5));
@@ -157,18 +163,22 @@ fn main() -> eframe::Result {
     let (tx, rx) = mpsc::channel();
     let refresh = Arc::new(AtomicBool::new(false));
     let worker_refresh = refresh.clone();
+    let always_on_top = config.always_on_top;
+    let font = config.font.clone();
     thread::spawn(move || worker(config, tx, worker_refresh));
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([820.0, 620.0])
-            .with_min_inner_size([640.0, 400.0]),
-        ..Default::default()
-    };
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([560.0, 430.0])
+        .with_min_inner_size([360.0, 240.0]);
+    if always_on_top {
+        viewport = viewport.with_always_on_top();
+    }
+    let options = eframe::NativeOptions { viewport, ..Default::default() };
     eframe::run_native(
         "Status Panel",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
+            install_font(&cc.egui_ctx, &font);
             orange_theme(&cc.egui_ctx);
             Ok(Box::new(App { rx, refresh, snapshot: None }))
         }),
@@ -194,6 +204,39 @@ const ORANGE_DEEP: egui::Color32 = egui::Color32::from_rgb(194, 65, 12);
 const OK: egui::Color32 = egui::Color32::from_rgb(21, 128, 61);
 const WARN: egui::Color32 = egui::Color32::from_rgb(180, 83, 9);
 const ERR: egui::Color32 = egui::Color32::from_rgb(220, 38, 38);
+
+fn install_font(ctx: &egui::Context, name: &str) {
+    let Some(path) = font_file(name) else {
+        return;
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return;
+    };
+    let mut fonts = egui::FontDefinitions::default();
+    fonts
+        .font_data
+        .insert("custom".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts.families.entry(family).or_default().insert(0, "custom".to_owned());
+    }
+    ctx.set_fonts(fonts);
+}
+
+fn font_file(name: &str) -> Option<PathBuf> {
+    let file = match name.to_ascii_lowercase().as_str() {
+        "consolas" => "consola.ttf".to_string(),
+        "dejavu sans mono" | "dejavusansmono" => "DejaVuSansMono.ttf".to_string(),
+        other => format!("{other}.ttf"),
+    };
+    let dirs: &[&str] = if cfg!(windows) {
+        &[r"C:\Windows\Fonts"]
+    } else {
+        &["/usr/share/fonts/truetype/dejavu", "/usr/share/fonts"]
+    };
+    dirs.iter()
+        .map(|dir| PathBuf::from(dir).join(&file))
+        .find(|path| path.is_file())
+}
 
 fn orange_theme(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::light();
@@ -357,12 +400,18 @@ impl eframe::App for App {
 
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Status Panel").heading().strong().color(ORANGE));
+            ui.label(egui::RichText::new("Status Panel").size(18.0).strong().color(ORANGE));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let button = egui::Button::new(egui::RichText::new("Refresh").color(egui::Color32::WHITE).strong())
                     .fill(ORANGE_DEEP);
                 if ui.add(button).clicked() {
                     self.refresh.store(true, Ordering::SeqCst);
+                }
+                if ui.small_button("+").on_hover_text("Zoom in (Ctrl +)").clicked() {
+                    ui.ctx().set_zoom_factor((ui.ctx().zoom_factor() + 0.1).clamp(0.7, 2.0));
+                }
+                if ui.small_button("−").on_hover_text("Zoom out (Ctrl -)").clicked() {
+                    ui.ctx().set_zoom_factor((ui.ctx().zoom_factor() - 0.1).clamp(0.7, 2.0));
                 }
                 let status = match &self.snapshot {
                     Some(snapshot) => format!("updated {}s ago", snapshot.at.elapsed().as_secs()),
@@ -445,7 +494,7 @@ fn card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
 }
 
 fn section_title(ui: &mut egui::Ui, title: &str) {
-    ui.label(egui::RichText::new(title).size(18.0).strong().color(TEXT));
+    ui.label(egui::RichText::new(title).size(16.0).strong().color(TEXT));
     ui.add_space(4.0);
     ui.separator();
     ui.add_space(8.0);
@@ -511,20 +560,37 @@ fn stats_card(ui: &mut egui::Ui, stats: &Stats) {
         + stats.tokens.reasoning
         + stats.tokens.cache.read
         + cache_write;
+    let share = |value: i64| {
+        if total > 0 {
+            value as f64 / total as f64 * 100.0
+        } else {
+            0.0
+        }
+    };
 
     egui::Grid::new("stats")
-        .num_columns(2)
-        .spacing([32.0, 6.0])
+        .num_columns(3)
+        .spacing([28.0, 6.0])
         .show(ui, |ui| {
-            stat_row(ui, "Total", &thousands(total));
-            stat_row(ui, "Input", &thousands(stats.tokens.input));
-            stat_row(ui, "Output", &thousands(stats.tokens.output));
-            stat_row(ui, "Reasoning", &thousands(stats.tokens.reasoning));
-            stat_row(ui, "Cache read", &thousands(stats.tokens.cache.read));
+            stat_row(ui, "Total", &thousands(total), Some(100.0));
+            stat_row(ui, "Input", &thousands(stats.tokens.input), Some(share(stats.tokens.input)));
+            stat_row(ui, "Output", &thousands(stats.tokens.output), Some(share(stats.tokens.output)));
+            stat_row(
+                ui,
+                "Reasoning",
+                &thousands(stats.tokens.reasoning),
+                Some(share(stats.tokens.reasoning)),
+            );
+            stat_row(
+                ui,
+                "Cache read",
+                &thousands(stats.tokens.cache.read),
+                Some(share(stats.tokens.cache.read)),
+            );
             if cache_write > 0 {
-                stat_row(ui, "Cache write", &thousands(cache_write));
+                stat_row(ui, "Cache write", &thousands(cache_write), Some(share(cache_write)));
             }
-            stat_row(ui, "Cost", &format!("${:.2}", stats.cost));
+            stat_row(ui, "Cost", &format!("${:.2}", stats.cost), None);
         });
 
     ui.add_space(10.0);
@@ -543,9 +609,17 @@ fn stats_card(ui: &mut egui::Ui, stats: &Stats) {
     );
 }
 
-fn stat_row(ui: &mut egui::Ui, label: &str, value: &str) {
-    ui.label(egui::RichText::new(label).color(MUTED));
-    ui.label(egui::RichText::new(value).monospace().strong().color(TEXT));
+fn stat_row(ui: &mut egui::Ui, label: &str, value: &str, percent: Option<f64>) {
+    ui.label(egui::RichText::new(label).strong().color(TEXT));
+    ui.label(egui::RichText::new(value).monospace().color(TEXT));
+    match percent {
+        Some(percent) => {
+            ui.label(egui::RichText::new(format!("{percent:>5.1}%")).monospace().color(MUTED));
+        }
+        None => {
+            ui.label(egui::RichText::new("     -").monospace().color(MUTED));
+        }
+    }
     ui.end_row();
 }
 

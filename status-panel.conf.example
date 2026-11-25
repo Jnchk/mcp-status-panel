@@ -8,4 +8,7 @@ opencode_password=<OPENCODE_PASSWORD from serve.env>
 tls_insecure=false
 # GitHub releases feed used for the "latest v2" line
 releases_url=https://api.github.com/repos/anomalyco/opencode/releases?per_page=40
+always_on_top=true
+# any font file name found in the system font directory; Consolas on Windows
+font=Consolas
 interval_secs=30
