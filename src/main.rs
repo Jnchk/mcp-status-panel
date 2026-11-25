@@ -183,28 +183,45 @@ fn http_client(config: &Config) -> reqwest::blocking::Client {
         .expect("http client")
 }
 
-const ORANGE: egui::Color32 = egui::Color32::from_rgb(206, 106, 32);
+const BG: egui::Color32 = egui::Color32::from_rgb(251, 247, 242);
+const CARD: egui::Color32 = egui::Color32::WHITE;
+const TEXT: egui::Color32 = egui::Color32::from_rgb(31, 35, 40);
+const MUTED: egui::Color32 = egui::Color32::from_rgb(107, 114, 128);
+const BORDER: egui::Color32 = egui::Color32::from_rgb(234, 223, 210);
+const STRIPE: egui::Color32 = egui::Color32::from_rgb(246, 239, 230);
+const ORANGE: egui::Color32 = egui::Color32::from_rgb(234, 88, 12);
+const ORANGE_DEEP: egui::Color32 = egui::Color32::from_rgb(194, 65, 12);
+const OK: egui::Color32 = egui::Color32::from_rgb(21, 128, 61);
+const WARN: egui::Color32 = egui::Color32::from_rgb(180, 83, 9);
+const ERR: egui::Color32 = egui::Color32::from_rgb(220, 38, 38);
 
 fn orange_theme(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::light();
-    visuals.panel_fill = egui::Color32::from_rgb(250, 247, 242);
-    visuals.window_fill = visuals.panel_fill;
-    visuals.extreme_bg_color = egui::Color32::WHITE;
-    visuals.faint_bg_color = egui::Color32::from_rgb(244, 238, 229);
-    visuals.hyperlink_color = ORANGE;
-    visuals.selection.bg_fill = egui::Color32::from_rgba_unmultiplied(206, 106, 32, 64);
-    visuals.selection.stroke.color = egui::Color32::from_rgb(60, 45, 30);
-    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(247, 232, 214);
-    visuals.widgets.active.bg_fill = ORANGE;
-    visuals.widgets.active.fg_stroke.color = egui::Color32::WHITE;
+    visuals.panel_fill = BG;
+    visuals.window_fill = BG;
+    visuals.extreme_bg_color = CARD;
+    visuals.faint_bg_color = STRIPE;
+    visuals.override_text_color = Some(TEXT);
+    visuals.weak_text_color = Some(MUTED);
+    visuals.hyperlink_color = ORANGE_DEEP;
+    visuals.selection.bg_fill = egui::Color32::from_rgba_unmultiplied(234, 88, 12, 48);
+    visuals.widgets.inactive.bg_fill = CARD;
+    visuals.widgets.inactive.weak_bg_fill = CARD;
+    visuals.widgets.inactive.fg_stroke.color = TEXT;
     visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
     visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
     visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
+    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(250, 235, 220);
+    visuals.widgets.hovered.fg_stroke.color = TEXT;
+    visuals.widgets.active.bg_fill = ORANGE_DEEP;
+    visuals.widgets.active.fg_stroke.color = egui::Color32::WHITE;
 
     let mut style = (*ctx.style_of(egui::Theme::Light)).clone();
     style.spacing.item_spacing = egui::vec2(10.0, 8.0);
     style.spacing.button_padding = egui::vec2(12.0, 6.0);
+    style.spacing.interact_size.y = 28.0;
     style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(15.0));
+    style.text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(14.0));
     style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(14.0));
     style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::proportional(22.0));
     style.text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(12.5));
@@ -338,116 +355,148 @@ impl eframe::App for App {
         }
         ui.ctx().request_repaint_after(Duration::from_secs(1));
 
-        ui.add_space(6.0);
+        ui.add_space(10.0);
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Status Panel").heading().strong().color(ORANGE));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Refresh").clicked() {
+                let button = egui::Button::new(egui::RichText::new("Refresh").color(egui::Color32::WHITE).strong())
+                    .fill(ORANGE_DEEP);
+                if ui.add(button).clicked() {
                     self.refresh.store(true, Ordering::SeqCst);
                 }
-                if let Some(snapshot) = &self.snapshot {
-                    let age = snapshot.at.elapsed().as_secs();
-                    ui.weak(format!("updated {age}s ago"));
-                } else {
-                    ui.weak("loading...");
-                }
+                let status = match &self.snapshot {
+                    Some(snapshot) => format!("updated {}s ago", snapshot.at.elapsed().as_secs()),
+                    None => "loading...".to_string(),
+                };
+                ui.label(egui::RichText::new(status).color(MUTED).small());
             });
         });
+        ui.add_space(2.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("OpenCode").strong().color(ORANGE));
+            ui.label(egui::RichText::new("OpenCode").color(MUTED).small());
             match self.snapshot.as_ref().map(|s| &s.latest_v2) {
                 Some(Ok(Some(release))) => {
-                    ui.label(format!("latest v2 {}", release.tag_name));
-                    let date = release.published_at.as_deref().and_then(|at| at.get(..10));
-                    if let Some(date) = date {
-                        ui.weak(date);
+                    ui.label(
+                        egui::RichText::new(format!("latest v2 {}", release.tag_name))
+                            .monospace()
+                            .strong()
+                            .color(ORANGE_DEEP)
+                            .small(),
+                    );
+                    if let Some(date) = release.published_at.as_deref().and_then(|at| at.get(..10)) {
+                        ui.label(egui::RichText::new(date).color(MUTED).small());
                     }
                 }
                 Some(Ok(None)) => {
-                    ui.weak("latest v2 unknown");
+                    ui.label(egui::RichText::new("latest v2 unknown").color(MUTED).small());
                 }
                 Some(Err(error)) => {
-                    ui.colored_label(egui::Color32::from_rgb(200, 60, 50), error);
+                    ui.label(egui::RichText::new(error).color(ERR).small());
                 }
                 None => {
-                    ui.weak("checking version...");
+                    ui.label(egui::RichText::new("checking version...").color(MUTED).small());
                 }
             }
         });
-        ui.separator();
+        ui.add_space(8.0);
 
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.add_space(4.0);
-                ui.label(egui::RichText::new("MCP servers").heading().strong().color(ORANGE));
-                ui.add_space(2.0);
-                match self.snapshot.as_ref().map(|s| &s.gateway) {
-                    None => {
-                        ui.weak("loading...");
+                card(ui, |ui| {
+                    section_title(ui, "MCP servers");
+                    match self.snapshot.as_ref().map(|s| &s.gateway) {
+                        None => {
+                            ui.label(egui::RichText::new("loading...").color(MUTED));
+                        }
+                        Some(Err(error)) => {
+                            ui.label(egui::RichText::new(error).color(ERR));
+                        }
+                        Some(Ok(servers)) => mcp_table(ui, servers),
                     }
-                    Some(Err(error)) => {
-                        ui.colored_label(egui::Color32::from_rgb(220, 80, 80), error);
-                    }
-                    Some(Ok(servers)) => mcp_table(ui, servers),
-                }
+                });
 
-                ui.add_space(20.0);
-                ui.label(egui::RichText::new("Token usage").heading().strong().color(ORANGE));
-                ui.add_space(2.0);
-                match self.snapshot.as_ref().map(|s| &s.stats) {
-                    None => {
-                        ui.weak("loading...");
+                ui.add_space(12.0);
+
+                card(ui, |ui| {
+                    section_title(ui, "Token usage");
+                    match self.snapshot.as_ref().map(|s| &s.stats) {
+                        None => {
+                            ui.label(egui::RichText::new("loading...").color(MUTED));
+                        }
+                        Some(Err(error)) => {
+                            ui.label(egui::RichText::new(error).color(ERR));
+                        }
+                        Some(Ok(stats)) => stats_card(ui, stats),
                     }
-                    Some(Err(error)) => {
-                        ui.colored_label(egui::Color32::from_rgb(220, 80, 80), error);
-                    }
-                    Some(Ok(stats)) => stats_card(ui, stats),
-                }
+                });
                 ui.add_space(8.0);
             });
     }
+}
+
+fn card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .fill(CARD)
+        .stroke(egui::Stroke::new(1.0, BORDER))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::same(14))
+        .show(ui, add);
+}
+
+fn section_title(ui: &mut egui::Ui, title: &str) {
+    ui.label(egui::RichText::new(title).size(18.0).strong().color(TEXT));
+    ui.add_space(4.0);
+    ui.separator();
+    ui.add_space(8.0);
 }
 
 fn mcp_table(ui: &mut egui::Ui, servers: &[McpServer]) {
     egui::Grid::new("mcp")
         .striped(true)
         .num_columns(6)
-        .spacing([18.0, 6.0])
+        .spacing([18.0, 8.0])
         .show(ui, |ui| {
-            for title in ["server", "transport", "state", "tools", "latency", "last error"] {
-                ui.strong(title);
+            for title in ["SERVER", "TRANSPORT", "STATE", "TOOLS", "LATENCY", "LAST ERROR"] {
+                ui.label(egui::RichText::new(title).small().strong().color(MUTED));
             }
             ui.end_row();
 
             for server in servers {
-                ui.label(&server.name);
-                ui.label(&server.transport);
-                let color = match server.state.as_str() {
-                    "idle" => egui::Color32::from_rgb(90, 170, 110),
-                    "unknown" | "" => egui::Color32::GRAY,
-                    "error" | "failed" => egui::Color32::from_rgb(220, 80, 80),
-                    _ => egui::Color32::GRAY,
-                };
+                ui.label(egui::RichText::new(&server.name).strong().color(TEXT));
+                ui.label(egui::RichText::new(&server.transport).color(MUTED));
                 let suffix = server
                     .retry_in_s
                     .filter(|s| *s > 0)
                     .map(|s| format!(" (retry {s}s)"))
                     .unwrap_or_default();
-                ui.colored_label(color, format!("{}{}", server.state, suffix));
-                ui.label(if server.tools > 0 { server.tools.to_string() } else { "-".into() });
                 ui.label(
-                    server
-                        .latency_ms
-                        .map(|ms| format!("{ms:.0} ms"))
-                        .unwrap_or_else(|| "-".into()),
+                    egui::RichText::new(format!("{}{}", server.state, suffix))
+                        .color(state_color(&server.state))
+                        .strong(),
+                );
+                ui.label(
+                    egui::RichText::new(if server.tools > 0 { server.tools.to_string() } else { "-".into() })
+                        .monospace()
+                        .color(TEXT),
+                );
+                ui.label(
+                    egui::RichText::new(
+                        server
+                            .latency_ms
+                            .map(|ms| format!("{ms:.0} ms"))
+                            .unwrap_or_else(|| "-".into()),
+                    )
+                    .monospace()
+                    .color(TEXT),
                 );
                 match &server.last_error {
                     Some(error) => {
-                        ui.colored_label(egui::Color32::from_rgb(220, 80, 80), error);
+                        ui.label(egui::RichText::new(short(error, 48)).color(ERR))
+                            .on_hover_text(error);
                     }
                     None => {
-                        ui.weak("-");
+                        ui.label(egui::RichText::new("-").color(MUTED));
                     }
                 }
                 ui.end_row();
@@ -456,39 +505,67 @@ fn mcp_table(ui: &mut egui::Ui, servers: &[McpServer]) {
 }
 
 fn stats_card(ui: &mut egui::Ui, stats: &Stats) {
+    let cache_write = stats.tokens.cache.write;
     let total = stats.tokens.input
         + stats.tokens.output
         + stats.tokens.reasoning
         + stats.tokens.cache.read
-        + stats.tokens.cache.write;
+        + cache_write;
 
-    egui::Frame::group(ui.style()).show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(format!("Total: {}", thousands(total)));
-            ui.separator();
-            ui.label(format!("Input: {}", thousands(stats.tokens.input)));
-            ui.separator();
-            ui.label(format!("Output: {}", thousands(stats.tokens.output)));
-            ui.separator();
-            ui.label(format!("Reasoning: {}", thousands(stats.tokens.reasoning)));
-            ui.separator();
-            ui.label(format!("Cache read: {}", thousands(stats.tokens.cache.read)));
-            if stats.tokens.cache.write > 0 {
-                ui.separator();
-                ui.label(format!("Cache write: {}", thousands(stats.tokens.cache.write)));
+    egui::Grid::new("stats")
+        .num_columns(2)
+        .spacing([32.0, 6.0])
+        .show(ui, |ui| {
+            stat_row(ui, "Total", &thousands(total));
+            stat_row(ui, "Input", &thousands(stats.tokens.input));
+            stat_row(ui, "Output", &thousands(stats.tokens.output));
+            stat_row(ui, "Reasoning", &thousands(stats.tokens.reasoning));
+            stat_row(ui, "Cache read", &thousands(stats.tokens.cache.read));
+            if cache_write > 0 {
+                stat_row(ui, "Cache write", &thousands(cache_write));
             }
-            ui.separator();
-            ui.label(format!("Cost: ${:.2}", stats.cost));
+            stat_row(ui, "Cost", &format!("${:.2}", stats.cost));
         });
-        ui.add_space(6.0);
-        ui.weak(format!(
-            "{} prompts · {} steps · {} sessions · {} subagents",
+
+    ui.add_space(10.0);
+    ui.separator();
+    ui.add_space(6.0);
+    ui.label(
+        egui::RichText::new(format!(
+            "{} prompts  ·  {} steps  ·  {} sessions  ·  {} subagents",
             thousands(stats.prompts),
             thousands(stats.steps),
             thousands(stats.sessions),
             thousands(stats.subagents)
-        ));
-    });
+        ))
+        .color(MUTED)
+        .small(),
+    );
+}
+
+fn stat_row(ui: &mut egui::Ui, label: &str, value: &str) {
+    ui.label(egui::RichText::new(label).color(MUTED));
+    ui.label(egui::RichText::new(value).monospace().strong().color(TEXT));
+    ui.end_row();
+}
+
+fn state_color(state: &str) -> egui::Color32 {
+    match state {
+        "idle" => OK,
+        "unknown" | "" => WARN,
+        "error" | "failed" => ERR,
+        _ => MUTED,
+    }
+}
+
+fn short(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        text.to_string()
+    } else {
+        let mut cut: String = text.chars().take(max).collect();
+        cut.push('…');
+        cut
+    }
 }
 
 fn thousands(value: i64) -> String {
