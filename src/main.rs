@@ -21,6 +21,7 @@ struct Config {
     opencode_url: String,
     opencode_user: String,
     opencode_password: String,
+    tls_insecure: bool,
     interval: Duration,
 }
 
@@ -29,9 +30,10 @@ impl Default for Config {
         Self {
             gateway_url: "http://192.168.101.91:8930/status".into(),
             gateway_token: String::new(),
-            opencode_url: "http://192.168.101.91:10240/api/experimental/session/stats?tools=none&timezone=Asia/Shanghai".into(),
+            opencode_url: "https://192.168.101.91:10240/api/experimental/session/stats?tools=none&timezone=Asia/Shanghai".into(),
             opencode_user: "opencode".into(),
             opencode_password: String::new(),
+            tls_insecure: false,
             interval: Duration::from_secs(30),
         }
     }
@@ -68,6 +70,7 @@ impl Config {
                 "opencode_url" => config.opencode_url = value,
                 "opencode_user" => config.opencode_user = value,
                 "opencode_password" => config.opencode_password = value,
+                "tls_insecure" => config.tls_insecure = matches!(value.as_str(), "true" | "1" | "yes"),
                 "interval_secs" => {
                     if let Ok(secs) = value.parse::<u64>() {
                         config.interval = Duration::from_secs(secs.max(5));
@@ -92,7 +95,6 @@ struct McpServer {
     state: String,
     tools: i64,
     latency_ms: Option<f64>,
-    last_ok: Option<String>,
     last_error: Option<String>,
     retry_in_s: Option<i64>,
 }
@@ -134,6 +136,9 @@ struct Snapshot {
 
 fn main() -> eframe::Result {
     let config = Config::load();
+    if std::env::args().any(|arg| arg == "--check") {
+        return check(config);
+    }
     let (tx, rx) = mpsc::channel();
     let refresh = Arc::new(AtomicBool::new(false));
     let worker_refresh = refresh.clone();
@@ -152,11 +157,43 @@ fn main() -> eframe::Result {
     )
 }
 
-fn worker(config: Config, tx: mpsc::Sender<Snapshot>, refresh: Arc<AtomicBool>) {
-    let client = reqwest::blocking::Client::builder()
+fn http_client(config: &Config) -> reqwest::blocking::Client {
+    reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(10))
+        .danger_accept_invalid_certs(config.tls_insecure)
         .build()
-        .expect("http client");
+        .expect("http client")
+}
+
+fn check(config: Config) -> eframe::Result {
+    let client = http_client(&config);
+    match fetch_gateway(&client, &config) {
+        Ok(status) => {
+            println!("gateway: {} servers", status.servers.len());
+            for server in status.servers {
+                println!(
+                    "  {:<14} {:<6} {:<8} tools={:<3} latency={:?}",
+                    server.name, server.transport, server.state, server.tools, server.latency_ms
+                );
+            }
+        }
+        Err(error) => eprintln!("gateway error: {error}"),
+    }
+    match fetch_stats(&client, &config) {
+        Ok(envelope) => {
+            let stats = envelope.data;
+            println!(
+                "tokens: in={} out={} reasoning={} cache_read={} cost={:.2}",
+                stats.tokens.input, stats.tokens.output, stats.tokens.reasoning, stats.tokens.cache.read, stats.cost
+            );
+        }
+        Err(error) => eprintln!("stats error: {error}"),
+    }
+    Ok(())
+}
+
+fn worker(config: Config, tx: mpsc::Sender<Snapshot>, refresh: Arc<AtomicBool>) {
+    let client = http_client(&config);
     let mut last_run: Option<Instant> = None;
     loop {
         let due = refresh.swap(false, Ordering::SeqCst)
