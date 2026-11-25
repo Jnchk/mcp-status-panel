@@ -6,4 +6,6 @@ opencode_user=opencode
 opencode_password=<OPENCODE_PASSWORD from serve.env>
 # true skips certificate verification, needed when the LAN host uses a self-signed CA
 tls_insecure=false
+# GitHub releases feed used for the "latest v2" line
+releases_url=https://api.github.com/repos/anomalyco/opencode/releases?per_page=40
 interval_secs=30

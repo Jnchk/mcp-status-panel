@@ -22,6 +22,7 @@ struct Config {
     opencode_user: String,
     opencode_password: String,
     tls_insecure: bool,
+    releases_url: String,
     interval: Duration,
 }
 
@@ -34,6 +35,7 @@ impl Default for Config {
             opencode_user: "opencode".into(),
             opencode_password: String::new(),
             tls_insecure: false,
+            releases_url: "https://api.github.com/repos/anomalyco/opencode/releases?per_page=40".into(),
             interval: Duration::from_secs(30),
         }
     }
@@ -71,6 +73,7 @@ impl Config {
                 "opencode_user" => config.opencode_user = value,
                 "opencode_password" => config.opencode_password = value,
                 "tls_insecure" => config.tls_insecure = matches!(value.as_str(), "true" | "1" | "yes"),
+                "releases_url" => config.releases_url = value,
                 "interval_secs" => {
                     if let Ok(secs) = value.parse::<u64>() {
                         config.interval = Duration::from_secs(secs.max(5));
@@ -128,9 +131,21 @@ struct Cache {
     write: i64,
 }
 
+#[derive(Deserialize, Default, Clone)]
+struct Release {
+    tag_name: String,
+    #[serde(default)]
+    published_at: Option<String>,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    draft: bool,
+}
+
 struct Snapshot {
     gateway: Result<Vec<McpServer>, String>,
     stats: Result<Stats, String>,
+    latest_v2: Result<Option<Release>, String>,
     at: Instant,
 }
 
@@ -153,7 +168,10 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Status Panel",
         options,
-        Box::new(|_cc| Ok(Box::new(App { rx, refresh, snapshot: None }))),
+        Box::new(|cc| {
+            orange_theme(&cc.egui_ctx);
+            Ok(Box::new(App { rx, refresh, snapshot: None }))
+        }),
     )
 }
 
@@ -163,6 +181,37 @@ fn http_client(config: &Config) -> reqwest::blocking::Client {
         .danger_accept_invalid_certs(config.tls_insecure)
         .build()
         .expect("http client")
+}
+
+const ORANGE: egui::Color32 = egui::Color32::from_rgb(206, 106, 32);
+
+fn orange_theme(ctx: &egui::Context) {
+    let mut visuals = egui::Visuals::light();
+    visuals.panel_fill = egui::Color32::from_rgb(250, 247, 242);
+    visuals.window_fill = visuals.panel_fill;
+    visuals.extreme_bg_color = egui::Color32::WHITE;
+    visuals.faint_bg_color = egui::Color32::from_rgb(244, 238, 229);
+    visuals.hyperlink_color = ORANGE;
+    visuals.selection.bg_fill = egui::Color32::from_rgba_unmultiplied(206, 106, 32, 64);
+    visuals.selection.stroke.color = egui::Color32::from_rgb(60, 45, 30);
+    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(247, 232, 214);
+    visuals.widgets.active.bg_fill = ORANGE;
+    visuals.widgets.active.fg_stroke.color = egui::Color32::WHITE;
+    visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
+    visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
+    visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
+
+    let mut style = (*ctx.style_of(egui::Theme::Light)).clone();
+    style.spacing.item_spacing = egui::vec2(10.0, 8.0);
+    style.spacing.button_padding = egui::vec2(12.0, 6.0);
+    style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(15.0));
+    style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(14.0));
+    style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::proportional(22.0));
+    style.text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(12.5));
+
+    ctx.set_theme(egui::ThemePreference::Light);
+    ctx.set_visuals_of(egui::Theme::Light, visuals);
+    ctx.set_style_of(egui::Theme::Light, style);
 }
 
 fn check(config: Config) -> eframe::Result {
@@ -189,19 +238,39 @@ fn check(config: Config) -> eframe::Result {
         }
         Err(error) => eprintln!("stats error: {error}"),
     }
+    match fetch_latest(&client, &config) {
+        Ok(Some(release)) => println!(
+            "latest v2: {} ({})",
+            release.tag_name,
+            release.published_at.as_deref().unwrap_or("?")
+        ),
+        Ok(None) => println!("latest v2: none"),
+        Err(error) => eprintln!("releases error: {error}"),
+    }
     Ok(())
 }
 
 fn worker(config: Config, tx: mpsc::Sender<Snapshot>, refresh: Arc<AtomicBool>) {
     let client = http_client(&config);
     let mut last_run: Option<Instant> = None;
+    let mut latest_v2: Result<Option<Release>, String> = Ok(None);
+    let mut last_version_check: Option<Instant> = None;
     loop {
+        if last_version_check.is_none_or(|t| t.elapsed() >= Duration::from_secs(3600)) {
+            latest_v2 = fetch_latest(&client, &config);
+            last_version_check = Some(Instant::now());
+        }
         let due = refresh.swap(false, Ordering::SeqCst)
             || last_run.is_none_or(|t| t.elapsed() >= config.interval);
         if due {
             let gateway = fetch_gateway(&client, &config).map(|r| r.servers);
             let stats = fetch_stats(&client, &config).map(|r| r.data);
-            let _ = tx.send(Snapshot { gateway, stats, at: Instant::now() });
+            let _ = tx.send(Snapshot {
+                gateway,
+                stats,
+                latest_v2: latest_v2.clone(),
+                at: Instant::now(),
+            });
             last_run = Some(Instant::now());
         }
         thread::sleep(Duration::from_millis(500));
@@ -236,6 +305,22 @@ fn fetch_stats(client: &reqwest::blocking::Client, config: &Config) -> Result<St
         .map_err(|e| format!("opencode JSON: {e}"))
 }
 
+fn fetch_latest(client: &reqwest::blocking::Client, config: &Config) -> Result<Option<Release>, String> {
+    let releases: Vec<Release> = client
+        .get(&config.releases_url)
+        .header(reqwest::header::USER_AGENT, "status-panel")
+        .send()
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| format!("releases: {e}"))?
+        .json()
+        .map_err(|e| format!("releases JSON: {e}"))?;
+    releases
+        .into_iter()
+        .find(|release| !release.draft && !release.prerelease && release.tag_name.starts_with("v2."))
+        .map(Some)
+        .ok_or_else(|| "no stable v2 release found".to_string())
+}
+
 struct App {
     rx: Receiver<Snapshot>,
     refresh: Arc<AtomicBool>,
@@ -251,7 +336,7 @@ impl eframe::App for App {
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.heading("Status Panel");
+            ui.label(egui::RichText::new("Status Panel").heading().strong().color(ORANGE));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Refresh").clicked() {
                     self.refresh.store(true, Ordering::SeqCst);
@@ -264,13 +349,34 @@ impl eframe::App for App {
                 }
             });
         });
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("OpenCode").strong().color(ORANGE));
+            match self.snapshot.as_ref().map(|s| &s.latest_v2) {
+                Some(Ok(Some(release))) => {
+                    ui.label(format!("latest v2 {}", release.tag_name));
+                    let date = release.published_at.as_deref().and_then(|at| at.get(..10));
+                    if let Some(date) = date {
+                        ui.weak(date);
+                    }
+                }
+                Some(Ok(None)) => {
+                    ui.weak("latest v2 unknown");
+                }
+                Some(Err(error)) => {
+                    ui.colored_label(egui::Color32::from_rgb(200, 60, 50), error);
+                }
+                None => {
+                    ui.weak("checking version...");
+                }
+            }
+        });
         ui.separator();
 
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.add_space(4.0);
-                ui.heading("MCP servers");
+                ui.label(egui::RichText::new("MCP servers").heading().strong().color(ORANGE));
                 ui.add_space(2.0);
                 match self.snapshot.as_ref().map(|s| &s.gateway) {
                     None => {
@@ -283,7 +389,7 @@ impl eframe::App for App {
                 }
 
                 ui.add_space(20.0);
-                ui.heading("Token usage");
+                ui.label(egui::RichText::new("Token usage").heading().strong().color(ORANGE));
                 ui.add_space(2.0);
                 match self.snapshot.as_ref().map(|s| &s.stats) {
                     None => {
