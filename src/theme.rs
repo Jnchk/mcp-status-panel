@@ -91,10 +91,3 @@ pub fn card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         .inner_margin(egui::Margin::same(14))
         .show(ui, add);
 }
-
-pub fn section_title(ui: &mut egui::Ui, title: &str) {
-    ui.label(egui::RichText::new(title).size(16.0).strong().color(TEXT));
-    ui.add_space(4.0);
-    ui.separator();
-    ui.add_space(8.0);
-}

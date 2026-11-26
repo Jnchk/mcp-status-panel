@@ -9,10 +9,11 @@ use std::{
 
 use eframe::egui;
 
+use crate::config::BlockConfig;
 use crate::model::Snapshot;
-use crate::theme::{card, section_title, ERR, MUTED, ORANGE, ORANGE_DEEP};
+use crate::theme::{card, ERR, MUTED, ORANGE, ORANGE_DEEP};
 use crate::tray::{make_tray, TraySlot};
-use crate::ui::{mcp_table, stats_card};
+use crate::ui::{block_header, block_title, mcp_table, stats_card};
 
 pub struct App {
     rx: Receiver<Snapshot>,
@@ -24,10 +25,17 @@ pub struct App {
     #[cfg_attr(not(windows), allow(dead_code))]
     tray: TraySlot,
     zoom: f32,
+    blocks: Vec<BlockConfig>,
 }
 
 impl App {
-    pub fn new(rx: Receiver<Snapshot>, refresh: Arc<AtomicBool>, tray_enabled: bool, zoom: f32) -> Self {
+    pub fn new(
+        rx: Receiver<Snapshot>,
+        refresh: Arc<AtomicBool>,
+        tray_enabled: bool,
+        zoom: f32,
+        blocks: Vec<BlockConfig>,
+    ) -> Self {
         Self {
             rx,
             refresh,
@@ -36,6 +44,7 @@ impl App {
             quitting: false,
             tray: make_tray(tray_enabled),
             zoom,
+            blocks,
         }
     }
 
@@ -132,35 +141,58 @@ impl App {
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                card(ui, |ui| {
-                    section_title(ui, "MCP servers");
-                    match self.snapshot.as_ref().map(|s| &s.gateway) {
-                        None => {
-                            ui.label(egui::RichText::new("loading...").color(MUTED));
-                        }
-                        Some(Err(error)) => {
-                            ui.label(egui::RichText::new(error).color(ERR));
-                        }
-                        Some(Ok(servers)) => mcp_table(ui, servers),
+                let mut first = true;
+                for index in 0..self.blocks.len() {
+                    if !self.blocks[index].visible {
+                        continue;
                     }
-                });
-
-                ui.add_space(12.0);
-
-                card(ui, |ui| {
-                    section_title(ui, "Token usage");
-                    match self.snapshot.as_ref().map(|s| &s.stats) {
-                        None => {
-                            ui.label(egui::RichText::new("loading...").color(MUTED));
-                        }
-                        Some(Err(error)) => {
-                            ui.label(egui::RichText::new(error).color(ERR));
-                        }
-                        Some(Ok(stats)) => stats_card(ui, stats),
+                    if !first {
+                        ui.add_space(12.0);
                     }
-                });
+                    first = false;
+
+                    let title = block_title(&self.blocks[index].id).to_string();
+                    let expanded = self.blocks[index].expanded;
+                    let mut toggled = false;
+                    card(ui, |ui| {
+                        toggled = block_header(ui, &title, expanded);
+                        if expanded {
+                            self.render_block(ui, index);
+                        }
+                    });
+                    if toggled {
+                        self.blocks[index].expanded = !expanded;
+                    }
+                }
                 ui.add_space(8.0);
             });
+    }
+
+    fn render_block(&mut self, ui: &mut egui::Ui, index: usize) {
+        let id = self.blocks[index].id.as_str();
+        match id {
+            "mcp" => match self.snapshot.as_ref().map(|s| &s.gateway) {
+                None => {
+                    ui.label(egui::RichText::new("loading...").color(MUTED));
+                }
+                Some(Err(error)) => {
+                    ui.label(egui::RichText::new(error).color(ERR));
+                }
+                Some(Ok(servers)) => mcp_table(ui, servers),
+            },
+            "usage" => match self.snapshot.as_ref().map(|s| &s.stats) {
+                None => {
+                    ui.label(egui::RichText::new("loading...").color(MUTED));
+                }
+                Some(Err(error)) => {
+                    ui.label(egui::RichText::new(error).color(ERR));
+                }
+                Some(Ok(stats)) => stats_card(ui, stats),
+            },
+            other => {
+                ui.label(egui::RichText::new(format!("no renderer for block '{other}'")).color(ERR));
+            }
+        }
     }
 }
 

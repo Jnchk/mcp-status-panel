@@ -33,6 +33,7 @@ fn main() -> eframe::Result {
     let font = config.font.clone();
     let tray_enabled = config.tray;
     let zoom = config.zoom;
+    let blocks = config.blocks.clone();
     let taskbar = if cfg!(windows) { config.taskbar } else { true };
     thread::spawn(move || worker::worker(config, tx, worker_refresh));
 
@@ -52,7 +53,7 @@ fn main() -> eframe::Result {
             theme::install_font(&cc.egui_ctx, &font);
             theme::orange_theme(&cc.egui_ctx);
             cc.egui_ctx.set_zoom_factor(zoom);
-            Ok(Box::new(App::new(rx, refresh, tray_enabled, zoom)))
+            Ok(Box::new(App::new(rx, refresh, tray_enabled, zoom, blocks)))
         }),
     )
 }

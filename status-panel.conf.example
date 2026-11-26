@@ -15,6 +15,11 @@ font=Consolas
 tray=true
 # show the app button in the Windows taskbar
 taskbar=false
+# blocks, one group of keys each; unknown ids are ignored by the UI until they get a renderer
+block.mcp.visible=true
+block.mcp.expanded=true
+block.usage.visible=true
+block.usage.expanded=true
 # starting zoom, 0.7 to 2.0; the in-app zoom buttons write this value back
 zoom=1.00
 interval_secs=30

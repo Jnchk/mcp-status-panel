@@ -1,6 +1,23 @@
 use std::{path::{Path, PathBuf}, time::Duration};
 
 #[derive(Clone)]
+pub struct BlockConfig {
+    pub id: String,
+    pub visible: bool,
+    pub expanded: bool,
+}
+
+impl BlockConfig {
+    fn new(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            visible: true,
+            expanded: true,
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct Config {
     pub gateway_url: String,
     pub gateway_token: String,
@@ -14,6 +31,7 @@ pub struct Config {
     pub tray: bool,
     pub taskbar: bool,
     pub zoom: f32,
+    pub blocks: Vec<BlockConfig>,
     pub interval: Duration,
 }
 
@@ -32,6 +50,7 @@ impl Default for Config {
             tray: true,
             taskbar: false,
             zoom: 1.0,
+            blocks: vec![BlockConfig::new("mcp"), BlockConfig::new("usage")],
             interval: Duration::from_secs(30),
         }
     }
@@ -100,10 +119,34 @@ impl Config {
                         config.interval = Duration::from_secs(secs.max(5));
                     }
                 }
+                other if other.starts_with("block.") => parse_block(&mut config, other, &value),
                 _ => {}
             }
         }
         config
+    }
+}
+
+fn parse_block(config: &mut Config, key: &str, value: &str) {
+    let mut parts = key.split('.');
+    if parts.next() != Some("block") {
+        return;
+    }
+    let (Some(id), Some(field)) = (parts.next(), parts.next()) else {
+        return;
+    };
+    let index = match config.blocks.iter().position(|block| block.id == id) {
+        Some(index) => index,
+        None => {
+            config.blocks.push(BlockConfig::new(id));
+            config.blocks.len() - 1
+        }
+    };
+    let flag = matches!(value, "true" | "1" | "yes");
+    match field {
+        "visible" => config.blocks[index].visible = flag,
+        "expanded" => config.blocks[index].expanded = flag,
+        _ => {}
     }
 }
 
@@ -171,6 +214,26 @@ mod tests {
         assert_eq!(Config::from_text("zoom=0.2").zoom, 0.7);
         assert_eq!(Config::from_text("zoom=9").zoom, 2.0);
         assert_eq!(Config::from_text("zoom=abc").zoom, 1.0);
+    }
+
+    #[test]
+    fn blocks_can_be_hidden_and_collapsed() {
+        let config = Config::from_text("block.mcp.expanded=false\nblock.usage.visible=no\n");
+        let mcp = config.blocks.iter().find(|block| block.id == "mcp").unwrap();
+        let usage = config.blocks.iter().find(|block| block.id == "usage").unwrap();
+        assert!(mcp.visible);
+        assert!(!mcp.expanded);
+        assert!(!usage.visible);
+        assert!(usage.expanded);
+    }
+
+    #[test]
+    fn unknown_blocks_are_appended() {
+        let config = Config::from_text("block.extra.visible=false\n");
+        let extra = config.blocks.last().unwrap();
+        assert_eq!(extra.id, "extra");
+        assert!(!extra.visible);
+        assert!(extra.expanded);
     }
 
     #[test]

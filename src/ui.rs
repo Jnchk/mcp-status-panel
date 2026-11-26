@@ -3,6 +3,31 @@ use eframe::egui;
 use crate::model::{McpServer, Stats};
 use crate::theme::{ERR, MUTED, OK, TEXT, WARN};
 
+pub fn block_title(id: &str) -> &str {
+    match id {
+        "mcp" => "MCP servers",
+        "usage" => "Token usage",
+        other => other,
+    }
+}
+
+pub fn block_header(ui: &mut egui::Ui, title: &str, expanded: bool) -> bool {
+    let glyph = if expanded { "▾" } else { "▸" };
+    let response = ui.add(
+        egui::Button::new(
+            egui::RichText::new(format!("{glyph}  {title}"))
+                .size(16.0)
+                .strong()
+                .color(TEXT),
+        )
+        .frame(false),
+    );
+    ui.add_space(4.0);
+    ui.separator();
+    ui.add_space(if expanded { 8.0 } else { 2.0 });
+    response.clicked()
+}
+
 pub fn mcp_table(ui: &mut egui::Ui, servers: &[McpServer]) {
     egui::Grid::new("mcp")
         .striped(true)
