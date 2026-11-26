@@ -33,7 +33,7 @@ fn create_tray() -> Option<Tray> {
     menu.append(&PredefinedMenuItem::separator()).ok()?;
     menu.append(&quit).ok()?;
 
-    let icon = tray_icon::Icon::from_rgba(tray_icon_rgba(), 32, 32).ok()?;
+    let icon = tray_icon::Icon::from_rgba(crate::icon::rgba(32), 32, 32).ok()?;
     let icon = tray_icon::TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
@@ -49,22 +49,3 @@ fn create_tray() -> Option<Tray> {
     })
 }
 
-#[cfg(windows)]
-fn tray_icon_rgba() -> Vec<u8> {
-    const SIZE: u32 = 32;
-    let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let dx = x as f32 - 15.5;
-            let dy = y as f32 - 15.5;
-            if (dx * dx + dy * dy).sqrt() <= 15.0 {
-                let index = ((y * SIZE + x) * 4) as usize;
-                rgba[index] = 234;
-                rgba[index + 1] = 88;
-                rgba[index + 2] = 12;
-                rgba[index + 3] = 255;
-            }
-        }
-    }
-    rgba
-}

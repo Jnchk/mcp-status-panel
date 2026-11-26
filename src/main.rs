@@ -3,6 +3,7 @@
 mod api;
 mod app;
 mod config;
+mod icon;
 mod model;
 mod theme;
 mod tray;
@@ -37,7 +38,8 @@ fn main() -> eframe::Result {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([560.0, 430.0])
         .with_min_inner_size([360.0, 240.0])
-        .with_taskbar(taskbar);
+        .with_taskbar(taskbar)
+        .with_icon(icon::window_icon());
     if always_on_top {
         viewport = viewport.with_always_on_top();
     }
