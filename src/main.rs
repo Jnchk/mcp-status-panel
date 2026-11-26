@@ -6,6 +6,7 @@ mod config;
 mod icon;
 mod icon_art;
 mod layout;
+mod mem;
 mod model;
 mod theme;
 mod tray;
@@ -18,15 +19,54 @@ use std::{
 };
 
 use eframe::egui;
+use eframe::egui_wgpu::{WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew};
+use eframe::wgpu;
 
 use crate::app::App;
 use crate::config::Config;
+
+fn wgpu_configuration() -> WgpuConfiguration {
+    let WgpuSetupCreateNew {
+        instance_descriptor,
+        display_handle,
+        power_preference,
+        native_adapter_selector,
+        device_descriptor,
+    } = WgpuSetupCreateNew::without_display_handle();
+
+    let instance_descriptor = wgpu::InstanceDescriptor {
+        backends: if cfg!(windows) {
+            wgpu::Backends::DX12
+        } else {
+            instance_descriptor.backends
+        },
+        ..instance_descriptor
+    };
+
+    let setup = WgpuSetupCreateNew {
+        instance_descriptor,
+        display_handle,
+        power_preference,
+        native_adapter_selector,
+        device_descriptor: std::sync::Arc::new(move |adapter| {
+            let mut descriptor = device_descriptor(adapter);
+            descriptor.memory_hints = wgpu::MemoryHints::MemoryUsage;
+            descriptor
+        }),
+    };
+
+    WgpuConfiguration {
+        wgpu_setup: WgpuSetup::CreateNew(setup),
+        ..Default::default()
+    }
+}
 
 fn main() -> eframe::Result {
     let config = Config::load();
     if std::env::args().any(|arg| arg == "--check") {
         return api::check(config);
     }
+    let mem_log = std::env::args().any(|arg| arg == "--mem");
 
     let (tx, rx) = mpsc::channel();
     let refresh = std::sync::Arc::new(AtomicBool::new(false));
@@ -47,7 +87,11 @@ fn main() -> eframe::Result {
     if always_on_top {
         viewport = viewport.with_always_on_top();
     }
-    let options = eframe::NativeOptions { viewport, ..Default::default() };
+    let options = eframe::NativeOptions {
+        viewport,
+        wgpu_options: wgpu_configuration(),
+        ..Default::default()
+    };
     eframe::run_native(
         "Status Panel",
         options,
@@ -55,7 +99,16 @@ fn main() -> eframe::Result {
             theme::install_font(&cc.egui_ctx, &font);
             theme::orange_theme(&cc.egui_ctx);
             cc.egui_ctx.set_zoom_factor(zoom);
-            Ok(Box::new(App::new(rx, refresh, tray_enabled, zoom, blocks)))
+            let render_state = cc.wgpu_render_state.clone();
+            Ok(Box::new(App::new(
+                rx,
+                refresh,
+                tray_enabled,
+                zoom,
+                blocks,
+                render_state,
+                mem_log,
+            )))
         }),
     )
 }

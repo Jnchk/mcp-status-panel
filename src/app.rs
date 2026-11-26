@@ -4,13 +4,15 @@ use std::{
         mpsc::Receiver,
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use eframe::egui;
+use eframe::egui_wgpu::RenderState;
 
 use crate::config::BlockConfig;
 use crate::layout;
+use crate::mem;
 use crate::model::Snapshot;
 use crate::theme::{card, ERR, MUTED, ORANGE, ORANGE_DEEP};
 use crate::tray::{make_tray, TraySlot};
@@ -28,15 +30,21 @@ pub struct App {
     zoom: f32,
     blocks: Vec<BlockConfig>,
     widths: Vec<f32>,
+    render_state: Option<RenderState>,
+    mem_log: bool,
+    last_mem: Instant,
 }
 
 impl App {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         rx: Receiver<Snapshot>,
         refresh: Arc<AtomicBool>,
         tray_enabled: bool,
         zoom: f32,
         blocks: Vec<BlockConfig>,
+        render_state: Option<RenderState>,
+        mem_log: bool,
     ) -> Self {
         let widths = vec![0.0; blocks.len()];
         Self {
@@ -49,6 +57,9 @@ impl App {
             zoom,
             blocks,
             widths,
+            render_state,
+            mem_log,
+            last_mem: Instant::now(),
         }
     }
 
@@ -309,6 +320,10 @@ impl eframe::App for App {
         if (zoom - self.zoom).abs() > 0.005 {
             self.zoom = zoom;
             crate::config::Config::save_zoom(zoom);
+        }
+        if self.mem_log && self.last_mem.elapsed() >= Duration::from_secs(5) {
+            self.last_mem = Instant::now();
+            mem::write(self.render_state.as_ref());
         }
         #[cfg(windows)]
         self.poll_tray(ctx);
