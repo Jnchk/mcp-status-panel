@@ -10,10 +10,11 @@ use std::{
 use eframe::egui;
 
 use crate::config::BlockConfig;
+use crate::layout;
 use crate::model::Snapshot;
 use crate::theme::{card, ERR, MUTED, ORANGE, ORANGE_DEEP};
 use crate::tray::{make_tray, TraySlot};
-use crate::ui::{block_header, block_title, mcp_table, stats_card};
+use crate::ui::{block_title, chip, mcp_table, minimize_button, stats_card, CardAction};
 
 pub struct App {
     rx: Receiver<Snapshot>,
@@ -26,6 +27,7 @@ pub struct App {
     tray: TraySlot,
     zoom: f32,
     blocks: Vec<BlockConfig>,
+    widths: Vec<f32>,
 }
 
 impl App {
@@ -36,6 +38,7 @@ impl App {
         zoom: f32,
         blocks: Vec<BlockConfig>,
     ) -> Self {
+        let widths = vec![0.0; blocks.len()];
         Self {
             rx,
             refresh,
@@ -45,15 +48,40 @@ impl App {
             tray: make_tray(tray_enabled),
             zoom,
             blocks,
+            widths,
         }
     }
 
     #[cfg(windows)]
+    fn show_window(&mut self, ctx: &egui::Context) {
+        self.visible = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    }
+
+    #[cfg(windows)]
+    fn hide_window(&mut self, ctx: &egui::Context) {
+        self.visible = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+    }
+
+    #[cfg(windows)]
     fn toggle_visibility(&mut self, ctx: &egui::Context) {
-        self.visible = !self.visible;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(self.visible));
         if self.visible {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            self.hide_window(ctx);
+        } else {
+            self.show_window(ctx);
+        }
+    }
+
+    #[cfg(windows)]
+    fn tray_click(&mut self, ctx: &egui::Context) {
+        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(false));
+        if self.visible && focused {
+            self.hide_window(ctx);
+        } else {
+            self.show_window(ctx);
         }
     }
 
@@ -71,7 +99,7 @@ impl App {
                 ..
             } = event
             {
-                self.toggle_visibility(ctx);
+                self.tray_click(ctx);
             }
         }
 
@@ -138,34 +166,108 @@ impl App {
     }
 
     fn body(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::both()
+        egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let mut first = true;
-                for index in 0..self.blocks.len() {
-                    if !self.blocks[index].visible {
-                        continue;
-                    }
-                    if !first {
-                        ui.add_space(12.0);
-                    }
-                    first = false;
-
-                    let title = block_title(&self.blocks[index].id).to_string();
-                    let expanded = self.blocks[index].expanded;
-                    let mut toggled = false;
-                    card(ui, |ui| {
-                        toggled = block_header(ui, &title, expanded);
-                        if expanded {
-                            self.render_block(ui, index);
-                        }
-                    });
-                    if toggled {
-                        self.blocks[index].expanded = !expanded;
-                    }
-                }
+                self.place(ui);
                 ui.add_space(8.0);
             });
+    }
+
+    fn place(&mut self, ui: &mut egui::Ui) {
+        let mut cards = Vec::new();
+        let mut chips = Vec::new();
+        for (index, block) in self.blocks.iter().enumerate() {
+            if !block.visible {
+                continue;
+            }
+            if block.minimized {
+                chips.push(index);
+            } else {
+                cards.push(index);
+            }
+        }
+
+        let available = ui.available_width();
+        let widths: Vec<f32> = cards.iter().map(|&index| self.widths[index]).collect();
+        let rows = layout::rows(&widths, available, layout::GAP);
+        let mut chips_placed = false;
+
+        for (row_index, row) in rows.iter().enumerate() {
+            let used: f32 = row.iter().map(|&position| self.widths[cards[position]]).sum::<f32>()
+                + layout::GAP * row.len().saturating_sub(1) as f32;
+            let remaining = available - used - layout::GAP;
+            let last_row = row_index + 1 == rows.len();
+            let place_chips = last_row && !chips.is_empty() && remaining >= self.chip_width(&chips);
+
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = layout::GAP;
+                for &position in row {
+                    let index = cards[position];
+                    let response = self.render_card(ui, index);
+                    self.widths[index] = response.rect.width();
+                }                if place_chips {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 6.0;
+                        for &index in &chips {
+                            self.widths[index] = self.render_chip(ui, index);
+                        }
+                    });
+                }
+            });
+            chips_placed |= place_chips;
+            ui.add_space(layout::GAP);
+        }
+
+        if !chips.is_empty() && !chips_placed {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                for &index in &chips {
+                    self.widths[index] = self.render_chip(ui, index);
+                }
+            });
+        }
+    }
+
+    fn chip_width(&self, chips: &[usize]) -> f32 {
+        chips.iter().map(|&index| self.widths[index]).fold(0.0f32, f32::max).max(110.0)
+    }
+
+    fn render_chip(&mut self, ui: &mut egui::Ui, index: usize) -> f32 {
+        let title = block_title(&self.blocks[index].id).to_string();
+        let (clicked, width) = chip(ui, &title);
+        if clicked {
+            self.blocks[index].minimized = false;
+        }
+        width
+    }
+
+    fn render_card(&mut self, ui: &mut egui::Ui, index: usize) -> egui::Response {
+        let title = block_title(&self.blocks[index].id).to_string();
+        let mut action = CardAction::None;
+        let response = card(ui, |ui| {
+            let top = ui.cursor().top();
+            ui.label(egui::RichText::new(&title).size(16.0).strong().color(crate::theme::TEXT));
+            ui.add_space(4.0);
+            self.render_block(ui, index);
+
+            let content = ui.min_rect();
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(content.right() - 18.0, top),
+                egui::vec2(18.0, 22.0),
+            );
+            if ui
+                .put(rect, minimize_button())
+                .on_hover_text("Minimize")
+                .clicked()
+            {
+                action = CardAction::Minimize;
+            }
+        });
+        if action == CardAction::Minimize {
+            self.blocks[index].minimized = true;
+        }
+        response
     }
 
     fn render_block(&mut self, ui: &mut egui::Ui, index: usize) {

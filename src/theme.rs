@@ -83,11 +83,14 @@ pub fn orange_theme(ctx: &egui::Context) {
     ctx.set_style_of(egui::Theme::Light, style);
 }
 
-pub fn card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+pub fn card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) -> egui::Response {
     egui::Frame::new()
         .fill(CARD)
         .stroke(egui::Stroke::new(1.0, BORDER))
         .corner_radius(egui::CornerRadius::same(8))
         .inner_margin(egui::Margin::same(14))
-        .show(ui, add);
+        .show(ui, |ui| {
+            ui.vertical(add);
+        })
+        .response
 }

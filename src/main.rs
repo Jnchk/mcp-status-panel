@@ -4,6 +4,8 @@ mod api;
 mod app;
 mod config;
 mod icon;
+mod icon_art;
+mod layout;
 mod model;
 mod theme;
 mod tray;

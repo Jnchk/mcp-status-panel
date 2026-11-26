@@ -16,3 +16,7 @@ strip = true
 
 [target."cfg(windows)".dependencies]
 tray-icon = "0.26.1"
+
+[build-dependencies]
+ico = "0.6.0"
+winresource = "0.1.34"

@@ -4,7 +4,7 @@ use std::{path::{Path, PathBuf}, time::Duration};
 pub struct BlockConfig {
     pub id: String,
     pub visible: bool,
-    pub expanded: bool,
+    pub minimized: bool,
 }
 
 impl BlockConfig {
@@ -12,7 +12,7 @@ impl BlockConfig {
         Self {
             id: id.to_string(),
             visible: true,
-            expanded: true,
+            minimized: false,
         }
     }
 }
@@ -145,7 +145,7 @@ fn parse_block(config: &mut Config, key: &str, value: &str) {
     let flag = matches!(value, "true" | "1" | "yes");
     match field {
         "visible" => config.blocks[index].visible = flag,
-        "expanded" => config.blocks[index].expanded = flag,
+        "minimized" => config.blocks[index].minimized = flag,
         _ => {}
     }
 }
@@ -217,14 +217,14 @@ mod tests {
     }
 
     #[test]
-    fn blocks_can_be_hidden_and_collapsed() {
-        let config = Config::from_text("block.mcp.expanded=false\nblock.usage.visible=no\n");
+    fn blocks_can_be_hidden_and_minimized() {
+        let config = Config::from_text("block.mcp.minimized=true\nblock.usage.visible=no\n");
         let mcp = config.blocks.iter().find(|block| block.id == "mcp").unwrap();
         let usage = config.blocks.iter().find(|block| block.id == "usage").unwrap();
         assert!(mcp.visible);
-        assert!(!mcp.expanded);
+        assert!(mcp.minimized);
         assert!(!usage.visible);
-        assert!(usage.expanded);
+        assert!(!usage.minimized);
     }
 
     #[test]
@@ -233,7 +233,7 @@ mod tests {
         let extra = config.blocks.last().unwrap();
         assert_eq!(extra.id, "extra");
         assert!(!extra.visible);
-        assert!(extra.expanded);
+        assert!(!extra.minimized);
     }
 
     #[test]

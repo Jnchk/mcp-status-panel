@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::model::{McpServer, Stats};
-use crate::theme::{ERR, MUTED, OK, TEXT, WARN};
+use crate::theme::{BORDER, CARD, ERR, MUTED, OK, TEXT, WARN};
 
 pub fn block_title(id: &str) -> &str {
     match id {
@@ -11,73 +11,91 @@ pub fn block_title(id: &str) -> &str {
     }
 }
 
-pub fn block_header(ui: &mut egui::Ui, title: &str, expanded: bool) -> bool {
-    let glyph = if expanded { "▾" } else { "▸" };
-    let response = ui.add(
-        egui::Button::new(
-            egui::RichText::new(format!("{glyph}  {title}"))
-                .size(16.0)
-                .strong()
-                .color(TEXT),
-        )
-        .frame(false),
-    );
-    ui.add_space(4.0);
-    ui.separator();
-    ui.add_space(if expanded { 8.0 } else { 2.0 });
-    response.clicked()
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CardAction {
+    None,
+    Minimize,
+}
+
+pub fn minimize_button() -> egui::Button<'static> {
+    egui::Button::new(egui::RichText::new("−").strong().color(MUTED)).frame(false)
+}
+
+pub fn chip(ui: &mut egui::Ui, title: &str) -> (bool, f32) {
+    let mut clicked = false;
+    let inner = egui::Frame::new()
+        .fill(CARD)
+        .stroke(egui::Stroke::new(1.0, BORDER))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let button =
+                    egui::Button::new(egui::RichText::new(format!("+  {title}")).color(MUTED)).frame(false);
+                clicked = ui.add(button).on_hover_text("Restore").clicked();
+            });
+        });
+    (clicked, inner.response.rect.width())
 }
 
 pub fn mcp_table(ui: &mut egui::Ui, servers: &[McpServer]) {
-    egui::Grid::new("mcp")
-        .striped(true)
-        .num_columns(6)
-        .spacing([18.0, 8.0])
+    egui::ScrollArea::horizontal()
+        .id_salt("mcp-table")
         .show(ui, |ui| {
-            for title in ["SERVER", "TRANSPORT", "STATE", "TOOLS", "LATENCY", "LAST ERROR"] {
-                ui.label(egui::RichText::new(title).small().strong().color(MUTED));
-            }
-            ui.end_row();
+            egui::Grid::new("mcp")
+                .striped(true)
+                .num_columns(6)
+                .spacing([18.0, 8.0])
+                .show(ui, |ui| {
+                    for title in ["SERVER", "TRANSPORT", "STATE", "TOOLS", "LATENCY", "LAST ERROR"] {
+                        ui.label(egui::RichText::new(title).small().strong().color(MUTED));
+                    }
+                    ui.end_row();
 
-            for server in servers {
-                ui.label(egui::RichText::new(&server.name).strong().color(TEXT));
-                ui.label(egui::RichText::new(&server.transport).color(MUTED));
-                let suffix = server
-                    .retry_in_s
-                    .filter(|s| *s > 0)
-                    .map(|s| format!(" (retry {s}s)"))
-                    .unwrap_or_default();
-                ui.label(
-                    egui::RichText::new(format!("{}{}", server.state, suffix))
-                        .color(state_color(&server.state))
-                        .strong(),
-                );
-                ui.label(
-                    egui::RichText::new(if server.tools > 0 { server.tools.to_string() } else { "-".into() })
-                        .monospace()
-                        .color(TEXT),
-                );
-                ui.label(
-                    egui::RichText::new(
-                        server
-                            .latency_ms
-                            .map(|ms| format!("{ms:.0} ms"))
-                            .unwrap_or_else(|| "-".into()),
-                    )
-                    .monospace()
-                    .color(TEXT),
-                );
-                match &server.last_error {
-                    Some(error) => {
-                        ui.label(egui::RichText::new(short(error, 48)).color(ERR))
-                            .on_hover_text(error);
+                    for server in servers {
+                        ui.label(egui::RichText::new(&server.name).strong().color(TEXT));
+                        ui.label(egui::RichText::new(&server.transport).color(MUTED));
+                        let suffix = server
+                            .retry_in_s
+                            .filter(|s| *s > 0)
+                            .map(|s| format!(" (retry {s}s)"))
+                            .unwrap_or_default();
+                        ui.label(
+                            egui::RichText::new(format!("{}{}", server.state, suffix))
+                                .color(state_color(&server.state))
+                                .strong(),
+                        );
+                        ui.label(
+                            egui::RichText::new(if server.tools > 0 {
+                                server.tools.to_string()
+                            } else {
+                                "-".into()
+                            })
+                            .monospace()
+                            .color(TEXT),
+                        );
+                        ui.label(
+                            egui::RichText::new(
+                                server
+                                    .latency_ms
+                                    .map(|ms| format!("{ms:.0} ms"))
+                                    .unwrap_or_else(|| "-".into()),
+                            )
+                            .monospace()
+                            .color(TEXT),
+                        );
+                        match &server.last_error {
+                            Some(error) => {
+                                ui.label(egui::RichText::new(short(error, 48)).color(ERR))
+                                    .on_hover_text(error);
+                            }
+                            None => {
+                                ui.label(egui::RichText::new("-").color(MUTED));
+                            }
+                        }
+                        ui.end_row();
                     }
-                    None => {
-                        ui.label(egui::RichText::new("-").color(MUTED));
-                    }
-                }
-                ui.end_row();
-            }
+                });
         });
 }
 
@@ -114,7 +132,6 @@ pub fn stats_card(ui: &mut egui::Ui, stats: &Stats) {
         });
 
     ui.add_space(10.0);
-    ui.separator();
     ui.add_space(6.0);
     ui.label(
         egui::RichText::new(format!(
