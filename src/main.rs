@@ -51,7 +51,7 @@ impl Default for Config {
 
 impl Config {
     fn load() -> Self {
-        let mut config = Config::default();
+        let config = Config::default();
         let candidates = [
             PathBuf::from("status-panel.conf"),
             std::env::current_exe()
@@ -65,6 +65,11 @@ impl Config {
         let Ok(text) = std::fs::read_to_string(path) else {
             return config;
         };
+        Config::from_text(&text)
+    }
+
+    fn from_text(text: &str) -> Self {
+        let mut config = Config::default();
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -390,11 +395,13 @@ fn fetch_latest(client: &reqwest::blocking::Client, config: &Config) -> Result<O
         .map_err(|e| format!("releases: {e}"))?
         .json()
         .map_err(|e| format!("releases JSON: {e}"))?;
+    pick_latest_v2(releases).map(Some).ok_or_else(|| "no stable v2 release found".to_string())
+}
+
+fn pick_latest_v2(releases: Vec<Release>) -> Option<Release> {
     releases
         .into_iter()
         .find(|release| !release.draft && !release.prerelease && release.tag_name.starts_with("v2."))
-        .map(Some)
-        .ok_or_else(|| "no stable v2 release found".to_string())
 }
 
 struct App {
@@ -706,35 +713,27 @@ fn stats_card(ui: &mut egui::Ui, stats: &Stats) {
         + stats.tokens.reasoning
         + stats.tokens.cache.read
         + cache_write;
-    let share = |value: i64| {
-        if total > 0 {
-            value as f64 / total as f64 * 100.0
-        } else {
-            0.0
-        }
-    };
-
     egui::Grid::new("stats")
         .num_columns(3)
         .spacing([28.0, 6.0])
         .show(ui, |ui| {
             stat_row(ui, "Total", &thousands(total), Some(100.0));
-            stat_row(ui, "Input", &thousands(stats.tokens.input), Some(share(stats.tokens.input)));
-            stat_row(ui, "Output", &thousands(stats.tokens.output), Some(share(stats.tokens.output)));
+            stat_row(ui, "Input", &thousands(stats.tokens.input), Some(share(stats.tokens.input, total)));
+            stat_row(ui, "Output", &thousands(stats.tokens.output), Some(share(stats.tokens.output, total)));
             stat_row(
                 ui,
                 "Reasoning",
                 &thousands(stats.tokens.reasoning),
-                Some(share(stats.tokens.reasoning)),
+                Some(share(stats.tokens.reasoning, total)),
             );
             stat_row(
                 ui,
                 "Cache read",
                 &thousands(stats.tokens.cache.read),
-                Some(share(stats.tokens.cache.read)),
+                Some(share(stats.tokens.cache.read, total)),
             );
             if cache_write > 0 {
-                stat_row(ui, "Cache write", &thousands(cache_write), Some(share(cache_write)));
+                stat_row(ui, "Cache write", &thousands(cache_write), Some(share(cache_write, total)));
             }
             stat_row(ui, "Cost", &format!("${:.2}", stats.cost), None);
         });
@@ -788,6 +787,14 @@ fn short(text: &str, max: usize) -> String {
     }
 }
 
+fn share(value: i64, total: i64) -> f64 {
+    if total > 0 {
+        value as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    }
+}
+
 fn thousands(value: i64) -> String {
     let digits = value.abs().to_string();
     let mut out = String::new();
@@ -798,4 +805,134 @@ fn thousands(value: i64) -> String {
         out.push(ch);
     }
     if value < 0 { format!("-{out}") } else { out }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_defaults_apply_without_file() {
+        let config = Config::from_text("");
+        assert_eq!(config.font, "Consolas");
+        assert!(config.tray);
+        assert!(!config.taskbar);
+        assert!(config.always_on_top);
+        assert_eq!(config.interval, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn config_parses_values_and_comments() {
+        let config = Config::from_text(
+            "# comment\n\
+             gateway_url = http://host:8930/status\n\
+             tls_insecure=yes\n\
+             tray=false\n\
+             taskbar=1\n\
+             font=Consolas\n\
+             interval_secs=45\n",
+        );
+        assert_eq!(config.gateway_url, "http://host:8930/status");
+        assert!(config.tls_insecure);
+        assert!(!config.tray);
+        assert!(config.taskbar);
+        assert_eq!(config.font, "Consolas");
+        assert_eq!(config.interval, Duration::from_secs(45));
+    }
+
+    #[test]
+    fn config_interval_has_a_floor_and_ignores_junk() {
+        let config = Config::from_text("interval_secs=1\nnoise\nunknown=value\ninterval_secs=\n");
+        assert_eq!(config.interval, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn thousands_groups_digits() {
+        assert_eq!(thousands(0), "0");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(1_234), "1,234");
+        assert_eq!(thousands(232_590_348), "232,590,348");
+        assert_eq!(thousands(-1_234), "-1,234");
+    }
+
+    #[test]
+    fn short_truncates_on_char_boundaries() {
+        assert_eq!(short("hello", 10), "hello");
+        assert_eq!(short("hello world", 5), "hello…");
+        assert_eq!(short("中文测试", 2), "中文…");
+    }
+
+    #[test]
+    fn share_is_percentage_of_total() {
+        assert_eq!(share(50, 200), 25.0);
+        assert_eq!(share(200, 200), 100.0);
+        assert_eq!(share(1, 0), 0.0);
+    }
+
+    #[test]
+    fn state_colors_follow_semantics() {
+        assert_eq!(state_color("idle"), OK);
+        assert_eq!(state_color("unknown"), WARN);
+        assert_eq!(state_color(""), WARN);
+        assert_eq!(state_color("failed"), ERR);
+        assert_eq!(state_color("error"), ERR);
+        assert_eq!(state_color("weird"), MUTED);
+    }
+
+    #[test]
+    fn gateway_payload_deserializes() {
+        let payload = r#"{
+            "generated_at": "2026-11-25T02:56:12Z",
+            "servers": [
+                {"name":"outline","transport":"http","state":"idle","tools":8,"latency_ms":94,
+                 "last_ok":"2026-11-23T05:55:47Z","last_error":null,"retry_in_s":0},
+                {"name":"mail","transport":"stdio","state":"unknown","tools":0,"latency_ms":null,
+                 "last_ok":null,"last_error":"spawn failed","retry_in_s":30}
+            ]
+        }"#;
+        let status: GatewayStatus = serde_json::from_str(payload).expect("gateway json");
+        assert_eq!(status.servers.len(), 2);
+        assert_eq!(status.servers[0].name, "outline");
+        assert_eq!(status.servers[0].latency_ms, Some(94.0));
+        assert_eq!(status.servers[1].state, "unknown");
+        assert_eq!(status.servers[1].last_error.as_deref(), Some("spawn failed"));
+        assert_eq!(status.servers[1].retry_in_s, Some(30));
+    }
+
+    #[test]
+    fn stats_payload_deserializes() {
+        let payload = r#"{"data":{
+            "sessions":11,"subagents":1,"prompts":204,"steps":1325,
+            "tokens":{"input":6800000,"output":410000,"reasoning":590000,
+                      "cache":{"read":210000000,"write":0}},
+            "cost":0.0,"activeDays":7
+        }}"#;
+        let envelope: StatsEnvelope = serde_json::from_str(payload).expect("stats json");
+        let stats = envelope.data;
+        assert_eq!(stats.sessions, 11);
+        assert_eq!(stats.prompts, 204);
+        assert_eq!(stats.tokens.cache.read, 210_000_000);
+        assert_eq!(stats.cost, 0.0);
+    }
+
+    #[test]
+    fn latest_v2_skips_prerelease_draft_and_v1() {
+        let release = |tag: &str, prerelease: bool, draft: bool| Release {
+            tag_name: tag.to_string(),
+            published_at: None,
+            prerelease,
+            draft,
+        };
+        let picked = pick_latest_v2(vec![
+            release("v2.5.0", false, true),
+            release("v2.4.2", true, false),
+            release("v1.19.6", false, false),
+            release("v2.4.1", false, false),
+            release("v2.4.0", false, false),
+        ])
+        .expect("a stable v2 release");
+        assert_eq!(picked.tag_name, "v2.4.1");
+
+        assert!(pick_latest_v2(vec![release("v1.19.6", false, false)]).is_none());
+    }
 }
