@@ -75,7 +75,6 @@ impl App {
     }
 
     fn header(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(10.0);
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Status Panel").size(18.0).strong().color(ORANGE));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -189,7 +188,11 @@ impl eframe::App for App {
         }
         ui.ctx().request_repaint_after(Duration::from_secs(1));
 
-        self.header(ui);
-        self.body(ui);
+        egui::Frame::new()
+            .inner_margin(egui::Margin { left: 16, right: 16, top: 10, bottom: 10 })
+            .show(ui, |ui| {
+                self.header(ui);
+                self.body(ui);
+            });
     }
 }
