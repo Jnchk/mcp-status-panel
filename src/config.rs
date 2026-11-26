@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::{path::{Path, PathBuf}, time::Duration};
 
 #[derive(Clone)]
 pub struct Config {
@@ -13,6 +13,7 @@ pub struct Config {
     pub font: String,
     pub tray: bool,
     pub taskbar: bool,
+    pub zoom: f32,
     pub interval: Duration,
 }
 
@@ -30,6 +31,7 @@ impl Default for Config {
             font: "Consolas".into(),
             tray: true,
             taskbar: false,
+            zoom: 1.0,
             interval: Duration::from_secs(30),
         }
     }
@@ -38,20 +40,31 @@ impl Default for Config {
 impl Config {
     pub fn load() -> Self {
         let config = Config::default();
-        let candidates = [
-            PathBuf::from("status-panel.conf"),
-            std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.join("status-panel.conf")))
-                .unwrap_or_default(),
-        ];
-        let Some(path) = candidates.iter().find(|p| p.is_file()) else {
+        let Some(path) = Self::path() else {
             return config;
         };
         let Ok(text) = std::fs::read_to_string(path) else {
             return config;
         };
         Config::from_text(&text)
+    }
+
+    pub fn path() -> Option<PathBuf> {
+        [
+            PathBuf::from("status-panel.conf"),
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join("status-panel.conf")))
+                .unwrap_or_default(),
+        ]
+        .into_iter()
+        .find(|p| p.is_file())
+    }
+
+    pub fn save_zoom(zoom: f32) {
+        if let Some(path) = Self::path() {
+            let _ = save_zoom_at(&path, zoom);
+        }
     }
 
     pub fn from_text(text: &str) -> Self {
@@ -77,6 +90,11 @@ impl Config {
                 "font" => config.font = value,
                 "tray" => config.tray = matches!(value.as_str(), "true" | "1" | "yes"),
                 "taskbar" => config.taskbar = matches!(value.as_str(), "true" | "1" | "yes"),
+                "zoom" => {
+                    if let Ok(zoom) = value.parse::<f32>() {
+                        config.zoom = zoom.clamp(0.7, 2.0);
+                    }
+                }
                 "interval_secs" => {
                     if let Ok(secs) = value.parse::<u64>() {
                         config.interval = Duration::from_secs(secs.max(5));
@@ -87,6 +105,25 @@ impl Config {
         }
         config
     }
+}
+
+fn save_zoom_at(path: &Path, zoom: f32) -> std::io::Result<()> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let entry = format!("zoom={zoom:.2}");
+    let mut replaced = false;
+    for line in &mut lines {
+        if line.trim_start().starts_with("zoom=") {
+            *line = entry.clone();
+            replaced = true;
+        }
+    }
+    if !replaced {
+        lines.push(entry);
+    }
+    let mut output = lines.join("\n");
+    output.push('\n');
+    std::fs::write(path, output)
 }
 
 #[cfg(test)]
@@ -126,5 +163,30 @@ mod tests {
     fn interval_has_a_floor_and_junk_is_ignored() {
         let config = Config::from_text("interval_secs=1\nnoise\nunknown=value\ninterval_secs=\n");
         assert_eq!(config.interval, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn zoom_is_parsed_and_clamped() {
+        assert_eq!(Config::from_text("zoom=1.3").zoom, 1.3);
+        assert_eq!(Config::from_text("zoom=0.2").zoom, 0.7);
+        assert_eq!(Config::from_text("zoom=9").zoom, 2.0);
+        assert_eq!(Config::from_text("zoom=abc").zoom, 1.0);
+    }
+
+    #[test]
+    fn save_zoom_rewrites_or_appends() {
+        let path = std::env::temp_dir().join(format!("status-panel-zoom-{}.conf", std::process::id()));
+        std::fs::write(&path, "font=Consolas\nzoom=1.00\n").unwrap();
+        save_zoom_at(&path, 1.25).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("zoom=1.25"));
+        assert!(text.contains("font=Consolas"));
+
+        std::fs::write(&path, "font=Consolas\n").unwrap();
+        save_zoom_at(&path, 0.9).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("zoom=0.90"));
+
+        let _ = std::fs::remove_file(&path);
     }
 }

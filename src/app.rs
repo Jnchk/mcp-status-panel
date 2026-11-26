@@ -23,10 +23,11 @@ pub struct App {
     quitting: bool,
     #[cfg_attr(not(windows), allow(dead_code))]
     tray: TraySlot,
+    zoom: f32,
 }
 
 impl App {
-    pub fn new(rx: Receiver<Snapshot>, refresh: Arc<AtomicBool>, tray_enabled: bool) -> Self {
+    pub fn new(rx: Receiver<Snapshot>, refresh: Arc<AtomicBool>, tray_enabled: bool, zoom: f32) -> Self {
         Self {
             rx,
             refresh,
@@ -34,6 +35,7 @@ impl App {
             visible: true,
             quitting: false,
             tray: make_tray(tray_enabled),
+            zoom,
         }
     }
 
@@ -169,6 +171,11 @@ impl eframe::App for App {
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_millis(500));
+        let zoom = ctx.zoom_factor();
+        if (zoom - self.zoom).abs() > 0.005 {
+            self.zoom = zoom;
+            crate::config::Config::save_zoom(zoom);
+        }
         #[cfg(windows)]
         self.poll_tray(ctx);
 

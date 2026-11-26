@@ -15,4 +15,6 @@ font=Consolas
 tray=true
 # show the app button in the Windows taskbar
 taskbar=false
+# starting zoom, 0.7 to 2.0; the in-app zoom buttons write this value back
+zoom=1.00
 interval_secs=30
