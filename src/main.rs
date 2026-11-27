@@ -96,7 +96,7 @@ fn main() -> eframe::Result {
         "Status Panel",
         options,
         Box::new(move |cc| {
-            theme::install_font(&cc.egui_ctx, &font);
+            let font_warning = theme::install_font(&cc.egui_ctx, &font);
             theme::orange_theme(&cc.egui_ctx);
             cc.egui_ctx.set_zoom_factor(zoom);
             let render_state = cc.wgpu_render_state.clone();
@@ -108,6 +108,7 @@ fn main() -> eframe::Result {
                 blocks,
                 render_state,
                 mem_log,
+                font_warning,
             )))
         }),
     )

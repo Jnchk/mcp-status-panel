@@ -21,6 +21,7 @@ impl BlockConfig {
 pub struct Config {
     pub gateway_url: String,
     pub gateway_token: String,
+    pub mcp_token: String,
     pub opencode_url: String,
     pub opencode_user: String,
     pub opencode_password: String,
@@ -40,17 +41,22 @@ impl Default for Config {
         Self {
             gateway_url: "http://192.168.101.91:8930/status".into(),
             gateway_token: String::new(),
+            mcp_token: String::new(),
             opencode_url: "https://192.168.101.91:10240/api/experimental/session/stats?tools=none&timezone=Asia/Shanghai".into(),
             opencode_user: "opencode".into(),
             opencode_password: String::new(),
             tls_insecure: false,
             releases_url: "https://api.github.com/repos/anomalyco/opencode/releases?per_page=40".into(),
             always_on_top: true,
-            font: "Consolas".into(),
+            font: crate::theme::DEFAULT_FONT.into(),
             tray: true,
             taskbar: false,
             zoom: 1.0,
-            blocks: vec![BlockConfig::new("mcp"), BlockConfig::new("usage")],
+            blocks: vec![
+                BlockConfig::new("mcp"),
+                BlockConfig::new("usage"),
+                BlockConfig::new("tasks"),
+            ],
             interval: Duration::from_secs(30),
         }
     }
@@ -80,6 +86,16 @@ impl Config {
         .find(|p| p.is_file())
     }
 
+    /// The gateway's MCP endpoint, derived from `gateway_url` by replacing its path.
+    pub fn mcp_url(&self) -> String {
+        let Some(scheme) = self.gateway_url.find("://") else {
+            return self.gateway_url.clone();
+        };
+        let rest = &self.gateway_url[scheme + 3..];
+        let host_end = rest.find('/').unwrap_or(rest.len());
+        format!("{}/mcp", &self.gateway_url[..scheme + 3 + host_end])
+    }
+
     pub fn save_zoom(zoom: f32) {
         if let Some(path) = Self::path() {
             let _ = save_zoom_at(&path, zoom);
@@ -100,6 +116,7 @@ impl Config {
             match key.trim() {
                 "gateway_url" => config.gateway_url = value,
                 "gateway_token" => config.gateway_token = value,
+                "mcp_token" => config.mcp_token = value,
                 "opencode_url" => config.opencode_url = value,
                 "opencode_user" => config.opencode_user = value,
                 "opencode_password" => config.opencode_password = value,
@@ -176,7 +193,7 @@ mod tests {
     #[test]
     fn defaults_apply_without_file() {
         let config = Config::from_text("");
-        assert_eq!(config.font, "Consolas");
+        assert_eq!(config.font, crate::theme::DEFAULT_FONT);
         assert!(config.tray);
         assert!(!config.taskbar);
         assert!(config.always_on_top);
@@ -225,6 +242,23 @@ mod tests {
         assert!(mcp.minimized);
         assert!(!usage.visible);
         assert!(!usage.minimized);
+    }
+
+    #[test]
+    fn mcp_url_replaces_the_path() {
+        let mut config = Config::from_text("");
+        assert_eq!(config.mcp_url(), "http://192.168.101.91:8930/mcp");
+        config.gateway_url = "https://host:9000/prefix/status".into();
+        assert_eq!(config.mcp_url(), "https://host:9000/mcp");
+        config.gateway_url = "http://host:9000".into();
+        assert_eq!(config.mcp_url(), "http://host:9000/mcp");
+    }
+
+    #[test]
+    fn mcp_token_is_parsed() {
+        let config = Config::from_text("mcp_token=abc123\n");
+        assert_eq!(config.mcp_token, "abc123");
+        assert_eq!(Config::from_text("").mcp_token, "");
     }
 
     #[test]

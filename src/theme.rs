@@ -14,24 +14,106 @@ pub const OK: egui::Color32 = egui::Color32::from_rgb(21, 128, 61);
 pub const WARN: egui::Color32 = egui::Color32::from_rgb(180, 83, 9);
 pub const ERR: egui::Color32 = egui::Color32::from_rgb(220, 38, 38);
 
-pub fn install_font(ctx: &egui::Context, name: &str) {
-    let Some(path) = font_file(name) else {
-        return;
-    };
-    let Ok(bytes) = std::fs::read(&path) else {
-        return;
-    };
+const BUNDLED: &[u8] = include_bytes!("../assets/MapleMono-CN-Regular.subset.ttf");
+
+/// Default font: covers Latin, Simplified Chinese and kana with matching metrics.
+pub const DEFAULT_FONT: &str = "Maple Mono CN";
+
+/// Loads the configured font. Returns a warning when the name was set but not found.
+pub fn install_font(ctx: &egui::Context, name: &str) -> Option<String> {
     let mut fonts = egui::FontDefinitions::default();
-    fonts
-        .font_data
-        .insert("custom".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+    fonts.font_data.insert(
+        "bundled".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(BUNDLED)),
+    );
+
+    // Anything but the bundled family is a deliberate override and goes first.
+    let mut warning = None;
+    let custom = if is_bundled(name) {
+        None
+    } else {
+        match font_data(name) {
+            Some(data) => Some(data),
+            None => {
+                warning = Some(format!("font \"{name}\" not found, using {DEFAULT_FONT}"));
+                None
+            }
+        }
+    };
+    let has_custom = custom.is_some();
+    if let Some(data) = custom {
+        fonts
+            .font_data
+            .insert("custom".to_owned(), std::sync::Arc::new(data));
+    }
+
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        fonts.families.entry(family).or_default().insert(0, "custom".to_owned());
+        let list = fonts.families.entry(family).or_default();
+        list.insert(0, "bundled".to_owned());
+        if has_custom {
+            list.insert(0, "custom".to_owned());
+        }
     }
     ctx.set_fonts(fonts);
+    warning
+}
+
+fn is_bundled(name: &str) -> bool {
+    let name = name.trim().to_lowercase();
+    // "Noto..." was the bundled name before Maple; treat it as the bundled font too.
+    name.is_empty() || name.starts_with("maple") || name.starts_with("noto")
+}
+
+/// Windows ships the UI faces inside a collection, so a name maps to file + face index.
+fn windows_face(name: &str) -> Option<(&'static str, u32)> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "microsoft yahei ui" | "microsoft yahei ui regular" => Some(("msyh.ttc", 1)),
+        "microsoft yahei" | "microsoft yahei regular" => Some(("msyh.ttc", 0)),
+        _ => None,
+    }
+}
+
+fn font_data(name: &str) -> Option<egui::FontData> {
+    if let Some((file, index)) = windows_face(name) {
+        let bytes = std::fs::read(PathBuf::from(r"C:\Windows\Fonts").join(file)).ok()?;
+        return Some(egui::FontData::from_blob(std::sync::Arc::new(bytes), index));
+    }
+    font_file(name)
+        .and_then(|path| std::fs::read(path).ok())
+        .map(egui::FontData::from_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_font_is_a_font() {
+        assert!(BUNDLED.len() > 500_000, "subset should ship the CJK glyphs");
+        assert!(BUNDLED.starts_with(b"OTTO") || BUNDLED.starts_with(&[0, 1, 0, 0]));
+    }
+
+    #[test]
+    fn bundled_names_bypass_the_system_lookup() {
+        assert!(is_bundled(""));
+        assert!(is_bundled("Maple Mono CN"));
+        assert!(is_bundled("Noto Sans Mono CJK SC"));
+        assert!(!is_bundled("Microsoft YaHei UI"));
+    }
+
+    #[test]
+    fn yahei_names_pick_the_right_face() {
+        assert_eq!(windows_face("Microsoft YaHei UI"), Some(("msyh.ttc", 1)));
+        assert_eq!(windows_face("microsoft yahei"), Some(("msyh.ttc", 0)));
+        assert_eq!(windows_face("Consolas"), None);
+    }
 }
 
 fn font_file(name: &str) -> Option<PathBuf> {
+    let direct = PathBuf::from(name);
+    if direct.is_file() {
+        return Some(direct);
+    }
     let file = match name.to_ascii_lowercase().as_str() {
         "consolas" => "consola.ttf".to_string(),
         "dejavu sans mono" | "dejavusansmono" => "DejaVuSansMono.ttf".to_string(),

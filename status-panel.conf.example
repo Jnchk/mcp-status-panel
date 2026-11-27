@@ -1,6 +1,10 @@
 # status-panel configuration, read from the working directory or beside the exe.
 gateway_url=http://<host>:8930/status
 gateway_token=<token from opencode cli.json mcp-gateway-status plugin>
+# gateway MCP token (the Bearer token OpenCode uses for the MCP servers at /mcp);
+# used to read ongoing tasks from obsitrace through mcp-gateway
+mcp_token=<token from mcp-gateway config.json>
+
 opencode_url=https://<host>:10240/api/experimental/session/stats?tools=none&timezone=Asia/Shanghai
 opencode_user=opencode
 opencode_password=<OPENCODE_PASSWORD from serve.env>
@@ -9,8 +13,9 @@ tls_insecure=false
 # GitHub releases feed used for the "latest v2" line
 releases_url=https://api.github.com/repos/anomalyco/opencode/releases?per_page=40
 always_on_top=true
-# any font file name found in the system font directory; Consolas on Windows
-font=Consolas
+# font: empty or "Maple ..." uses the bundled Maple Mono CN (Latin + Chinese + kana);
+# any other value is a system font name or a path to a .ttf/.otf file
+font=Maple Mono CN
 # tray icon; closing the window hides instead of quitting, Quit is in the tray menu
 tray=true
 # show the app button in the Windows taskbar
@@ -20,6 +25,8 @@ block.mcp.visible=true
 block.mcp.minimized=false
 block.usage.visible=true
 block.usage.minimized=false
+block.tasks.visible=true
+block.tasks.minimized=false
 # starting zoom, 0.7 to 2.0; the in-app zoom buttons write this value back
 zoom=1.00
 interval_secs=30

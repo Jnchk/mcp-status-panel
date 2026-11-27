@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::model::{McpServer, Stats};
+use crate::model::{McpServer, Stats, Task, TasksPage};
 use crate::theme::{BORDER, CARD, ERR, MUTED, OK, ORANGE, ORANGE_DEEP, STRIPE, TEXT, WARN};
 
 const AMBER: egui::Color32 = egui::Color32::from_rgb(217, 119, 6);
@@ -11,6 +11,7 @@ pub fn block_title(id: &str) -> &str {
     match id {
         "mcp" => "MCP servers",
         "usage" => "Token usage",
+        "tasks" => "Ongoing tasks",
         other => other,
     }
 }
@@ -212,6 +213,98 @@ fn bar_edges(values: &[i64], total: i64, width: f32) -> Vec<f32> {
         });
     }
     edges
+}
+
+pub fn tasks_table(ui: &mut egui::Ui, page: &TasksPage) {
+    if page.tasks.is_empty() {
+        ui.label(egui::RichText::new("no ongoing tasks").color(MUTED));
+        return;
+    }
+
+    let mut tasks: Vec<&Task> = page.tasks.iter().collect();
+    tasks.sort_by(|a, b| {
+        let rank = |task: &Task| u8::from(task.status != "in_progress");
+        rank(a).cmp(&rank(b)).then_with(|| b.updated.cmp(&a.updated))
+    });
+
+    // As wide as the longest title, shrinking on narrow windows so UPDATED stays visible.
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let longest = tasks.iter().fold(0.0f32, |width, task| {
+        let natural = ui
+            .painter()
+            .layout_no_wrap(task.title.clone(), font.clone(), egui::Color32::PLACEHOLDER)
+            .size()
+            .x;
+        width.max(natural)
+    });
+    let title_width = longest.min(ui.available_width() - 330.0).max(160.0);
+
+    egui::ScrollArea::horizontal()
+        .id_salt("tasks-table")
+        .show(ui, |ui| {
+            egui::Grid::new("tasks")
+                .striped(true)
+                .num_columns(3)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    for title in ["PROJECT", "TASK", "UPDATED"] {
+                        ui.label(egui::RichText::new(title).small().strong().color(MUTED));
+                    }
+                    ui.end_row();
+
+                    for task in tasks {
+                        ui.label(egui::RichText::new(short(&task.project, 18)).color(MUTED));
+                        ui.scope(|ui| {
+                            ui.set_max_width(title_width);
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(&task.title).strong().color(TEXT))
+                                    .wrap(),
+                            )
+                            .on_hover_text(task_hover(task));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(&task.updated).monospace().color(TEXT).small(),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!("[{}]", task.status.replace('_', " ")))
+                                    .color(task_status_color(&task.status))
+                                    .small(),
+                            );
+                        });
+                        ui.end_row();
+                    }
+                });
+        });
+
+    if page.has_more {
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new(format!("showing {} of {}", page.tasks.len(), page.total))
+                .color(MUTED)
+                .small(),
+        );
+    }
+}
+
+fn task_hover(task: &Task) -> String {
+    let mut text = task.title.clone();
+    for extra in [&task.description, &task.latest_update] {
+        let extra = extra.trim();
+        if !extra.is_empty() {
+            text.push_str("\n\n");
+            text.push_str(extra);
+        }
+    }
+    text
+}
+
+fn task_status_color(status: &str) -> egui::Color32 {
+    match status {
+        "in_progress" => ORANGE,
+        "blocked" => ERR,
+        _ => MUTED,
+    }
 }
 
 fn state_color(state: &str) -> egui::Color32 {

@@ -13,15 +13,15 @@ use eframe::egui_wgpu::RenderState;
 use crate::config::BlockConfig;
 use crate::layout;
 use crate::mem;
-use crate::model::Snapshot;
+use crate::model::{Snapshot, Update};
 use crate::theme::{card, ERR, MUTED, ORANGE, ORANGE_DEEP};
 use crate::tray::{make_tray, TraySlot};
-use crate::ui::{block_title, chip, mcp_table, minimize_button, stats_card, CardAction};
+use crate::ui::{block_title, chip, mcp_table, minimize_button, stats_card, tasks_table, CardAction};
 
 pub struct App {
-    rx: Receiver<Snapshot>,
+    rx: Receiver<Update>,
     refresh: Arc<AtomicBool>,
-    snapshot: Option<Snapshot>,
+    snapshot: Snapshot,
     #[cfg_attr(not(windows), allow(dead_code))]
     visible: bool,
     quitting: bool,
@@ -33,24 +33,26 @@ pub struct App {
     render_state: Option<RenderState>,
     mem_log: bool,
     last_mem: Instant,
+    font_warning: Option<String>,
 }
 
 impl App {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        rx: Receiver<Snapshot>,
+        rx: Receiver<Update>,
         refresh: Arc<AtomicBool>,
         tray_enabled: bool,
         zoom: f32,
         blocks: Vec<BlockConfig>,
         render_state: Option<RenderState>,
         mem_log: bool,
+        font_warning: Option<String>,
     ) -> Self {
         let widths = vec![0.0; blocks.len()];
         Self {
             rx,
             refresh,
-            snapshot: None,
+            snapshot: Snapshot::default(),
             visible: true,
             quitting: false,
             tray: make_tray(tray_enabled),
@@ -60,6 +62,7 @@ impl App {
             render_state,
             mem_log,
             last_mem: Instant::now(),
+            font_warning,
         }
     }
 
@@ -139,8 +142,8 @@ impl App {
                 if ui.small_button("−").on_hover_text("Zoom out (Ctrl -)").clicked() {
                     ui.ctx().set_zoom_factor((ui.ctx().zoom_factor() - 0.1).clamp(0.7, 2.0));
                 }
-                let status = match &self.snapshot {
-                    Some(snapshot) => format!("updated {}s ago", snapshot.at.elapsed().as_secs()),
+                let status = match self.snapshot.at {
+                    Some(at) => format!("updated {}s ago", at.elapsed().as_secs()),
                     None => "loading...".to_string(),
                 };
                 ui.label(egui::RichText::new(status).color(MUTED).small());
@@ -149,7 +152,7 @@ impl App {
         ui.add_space(2.0);
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("OpenCode").color(MUTED).small());
-            match self.snapshot.as_ref().map(|s| &s.latest_v2) {
+            match &self.snapshot.latest_v2 {
                 Some(Ok(Some(release))) => {
                     ui.label(
                         egui::RichText::new(format!("latest v2 {}", release.tag_name))
@@ -171,6 +174,9 @@ impl App {
                 None => {
                     ui.label(egui::RichText::new("checking version...").color(MUTED).small());
                 }
+            }
+            if let Some(warning) = &self.font_warning {
+                ui.label(egui::RichText::new(warning).color(ERR).small());
             }
         });
         ui.add_space(8.0);
@@ -284,7 +290,7 @@ impl App {
     fn render_block(&mut self, ui: &mut egui::Ui, index: usize) {
         let id = self.blocks[index].id.as_str();
         match id {
-            "mcp" => match self.snapshot.as_ref().map(|s| &s.gateway) {
+            "mcp" => match &self.snapshot.gateway {
                 None => {
                     ui.label(egui::RichText::new("loading...").color(MUTED));
                 }
@@ -293,7 +299,7 @@ impl App {
                 }
                 Some(Ok(servers)) => mcp_table(ui, servers),
             },
-            "usage" => match self.snapshot.as_ref().map(|s| &s.stats) {
+            "usage" => match &self.snapshot.stats {
                 None => {
                     ui.label(egui::RichText::new("loading...").color(MUTED));
                 }
@@ -301,6 +307,15 @@ impl App {
                     ui.label(egui::RichText::new(error).color(ERR));
                 }
                 Some(Ok(stats)) => stats_card(ui, stats),
+            },
+            "tasks" => match &self.snapshot.tasks {
+                None => {
+                    ui.label(egui::RichText::new("loading...").color(MUTED));
+                }
+                Some(Err(error)) => {
+                    ui.label(egui::RichText::new(error).color(ERR));
+                }
+                Some(Ok(page)) => tasks_table(ui, page),
             },
             other => {
                 ui.label(egui::RichText::new(format!("no renderer for block '{other}'")).color(ERR));
@@ -339,8 +354,8 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        while let Ok(next) = self.rx.try_recv() {
-            self.snapshot = Some(next);
+        while let Ok(update) = self.rx.try_recv() {
+            self.snapshot.apply(update);
         }
         ui.ctx().request_repaint_after(Duration::from_secs(1));
 
