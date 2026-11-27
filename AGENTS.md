@@ -27,6 +27,22 @@ python3 -m zipfile -c status-panel-windows.zip dist/status-panel.exe dist/status
   `DISPLAY=:99 WGPU_BACKEND=vulkan`, resize via `xdotool search --name "Status Panel"`,
   capture with `scrot`. Screenshots are the only way to verify egui layout changes.
 
+## Deployment
+
+The deliverable is the zip; nothing runs on this Linux box.
+
+1. Copy `status-panel-windows.zip` to the Windows machine, extract `status-panel.exe` and
+   `status-panel.conf` into one folder (the exe reads the conf from its own directory, then cwd).
+2. Put the machine's real tokens in that `status-panel.conf`; `status-panel.conf.example` documents
+   every key and must stay in sync when a key is added.
+3. Autostart: a shortcut to the exe in `shell:startup`, or a scheduled task at logon. The exe is a
+   GUI app — no console, no service, no port.
+4. Verify: the header shows the gateway badge and `latest v2 <tag> released <date>`; a red header
+   warning means a font name in the conf is not installed.
+
+Upgrade = close the panel (or use the tray icon), replace the exe, keep the conf. `zoom=` is written
+back into the conf at runtime, so the user's zoom survives the swap.
+
 ## Config and secrets
 
 - `Config::load()` reads `status-panel.conf` from the cwd, then beside the exe.
