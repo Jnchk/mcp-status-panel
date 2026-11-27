@@ -162,7 +162,7 @@ impl App {
                             .small(),
                     );
                     if let Some(date) = release.published_at.as_deref().and_then(|at| at.get(..10)) {
-                        ui.label(egui::RichText::new(date).color(MUTED).small());
+                        ui.label(egui::RichText::new(format!("released {date}")).color(MUTED).small());
                     }
                 }
                 Some(Ok(None)) => {

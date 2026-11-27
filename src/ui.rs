@@ -237,7 +237,7 @@ pub fn tasks_table(ui: &mut egui::Ui, page: &TasksPage) {
             .x;
         width.max(natural)
     });
-    let title_width = longest.min(ui.available_width() - 330.0).max(160.0);
+    let title_width = longest.min(ui.available_width() - 340.0).max(160.0);
 
     egui::ScrollArea::horizontal()
         .id_salt("tasks-table")
