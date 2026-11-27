@@ -1,7 +1,11 @@
 use eframe::egui;
 
 use crate::model::{McpServer, Stats};
-use crate::theme::{BORDER, CARD, ERR, MUTED, OK, TEXT, WARN};
+use crate::theme::{BORDER, CARD, ERR, MUTED, OK, ORANGE, ORANGE_DEEP, STRIPE, TEXT, WARN};
+
+const AMBER: egui::Color32 = egui::Color32::from_rgb(217, 119, 6);
+const ORANGE_800: egui::Color32 = egui::Color32::from_rgb(146, 64, 14);
+const CACHE_BAR: egui::Color32 = egui::Color32::from_rgb(226, 214, 199);
 
 pub fn block_title(id: &str) -> &str {
     match id {
@@ -100,64 +104,114 @@ pub fn mcp_table(ui: &mut egui::Ui, servers: &[McpServer]) {
 }
 
 pub fn stats_card(ui: &mut egui::Ui, stats: &Stats) {
-    let cache_write = stats.tokens.cache.write;
     let total = stats.tokens.input
         + stats.tokens.output
         + stats.tokens.reasoning
         + stats.tokens.cache.read
-        + cache_write;
-    egui::Grid::new("stats")
-        .num_columns(3)
-        .spacing([28.0, 6.0])
-        .show(ui, |ui| {
-            stat_row(ui, "Total", &thousands(total), Some(100.0));
-            stat_row(ui, "Input", &thousands(stats.tokens.input), Some(share(stats.tokens.input, total)));
-            stat_row(ui, "Output", &thousands(stats.tokens.output), Some(share(stats.tokens.output, total)));
-            stat_row(
-                ui,
-                "Reasoning",
-                &thousands(stats.tokens.reasoning),
-                Some(share(stats.tokens.reasoning, total)),
-            );
-            stat_row(
-                ui,
-                "Cache read",
-                &thousands(stats.tokens.cache.read),
-                Some(share(stats.tokens.cache.read, total)),
-            );
-            if cache_write > 0 {
-                stat_row(ui, "Cache write", &thousands(cache_write), Some(share(cache_write, total)));
+        + stats.tokens.cache.write;
+    let parts = [
+        Part { value: stats.tokens.input, bar: ORANGE_DEEP },
+        Part { value: stats.tokens.output, bar: ORANGE },
+        Part { value: stats.tokens.reasoning, bar: AMBER },
+        Part { value: stats.tokens.cache.read, bar: CACHE_BAR },
+        Part { value: stats.tokens.cache.write, bar: ORANGE_800 },
+    ];
+
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Total").strong().color(TEXT));
+        ui.label(egui::RichText::new(thousands(total)).monospace().strong().color(TEXT));
+    });
+
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        for (position, (letter, part)) in ["I", "O", "R", "CR", "CW"].into_iter().zip(&parts).enumerate() {
+            if position > 0 {
+                ui.add_space(7.0);
             }
-            stat_row(ui, "Cost", &format!("${:.2}", stats.cost), None);
-        });
+            // A glyph, not a painted rect: same font as the label, so it sits on the
+            // text baseline exactly instead of being centered approximately.
+            ui.label(egui::RichText::new("■").monospace().color(part.bar));
+            ui.label(
+                egui::RichText::new(format!("{letter} ({:.1}%)", share(part.value, total)))
+                    .monospace()
+                    .color(MUTED),
+            );
+        }
+    });
+
+    ui.add_space(6.0);
+    let (bar, _) = ui.allocate_exact_size(egui::vec2(0.0, 8.0), egui::Sense::hover());
 
     ui.add_space(10.0);
-    ui.add_space(6.0);
     ui.label(
         egui::RichText::new(format!(
-            "{} prompts  ·  {} steps  ·  {} sessions  ·  {} subagents",
+            "{} prompts  ·  {} steps  ·  {} sessions  ·  {} subagents  ·  ${:.2}",
             thousands(stats.prompts),
             thousands(stats.steps),
             thousands(stats.sessions),
-            thousands(stats.subagents)
+            thousands(stats.subagents),
+            stats.cost
         ))
         .color(MUTED)
         .small(),
     );
+
+    // Painted after the last line so the bar matches the card's measured content width.
+    usage_bar(ui, bar, ui.min_rect().width(), &parts, total);
 }
 
-fn stat_row(ui: &mut egui::Ui, label: &str, value: &str, percent: Option<f64>) {
-    ui.label(egui::RichText::new(label).strong().color(TEXT));
-    ui.label(egui::RichText::new(value).monospace().color(TEXT));
-    match percent {
-        Some(percent) => {
-            ui.label(egui::RichText::new(format!("{percent:>5.1}%")).monospace().color(MUTED));
-        }
-        None => {
-            ui.label(egui::RichText::new("     -").monospace().color(MUTED));
-        }
+/// One token category: `bar` paints both its segment and its legend swatch.
+struct Part {
+    value: i64,
+    bar: egui::Color32,
+}
+
+fn usage_bar(ui: &egui::Ui, reserved: egui::Rect, width: f32, parts: &[Part], total: i64) {
+    let rect = egui::Rect::from_min_size(reserved.min, egui::vec2(width, reserved.height()));
+    let painter = ui.painter();
+    painter.rect_filled(rect, 4, STRIPE);
+    if total <= 0 {
+        return;
     }
-    ui.end_row();
+
+    let values: Vec<i64> = parts.iter().map(|part| part.value).collect();
+    let edges = bar_edges(&values, total, width);
+    let round = |on: bool| if on { 4 } else { 0 };
+    let visible: Vec<usize> = (0..parts.len()).filter(|&index| parts[index].value > 0).collect();
+    for (position, &index) in visible.iter().enumerate() {
+        let last = position + 1 == visible.len();
+        let radius = egui::CornerRadius {
+            nw: round(position == 0),
+            sw: round(position == 0),
+            ne: round(last),
+            se: round(last),
+        };
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left() + edges[index], rect.top()),
+                egui::pos2(rect.left() + edges[index + 1], rect.bottom()),
+            ),
+            radius,
+            parts[index].bar,
+        );
+    }
+}
+
+/// Pixel offsets of every part boundary; the last part always ends exactly at `width`.
+fn bar_edges(values: &[i64], total: i64, width: f32) -> Vec<f32> {
+    let mut edges = Vec::with_capacity(values.len() + 1);
+    let mut filled = 0i64;
+    edges.push(0.0);
+    for value in values {
+        filled += value;
+        edges.push(if filled >= total {
+            width
+        } else {
+            filled as f32 / total as f32 * width
+        });
+    }
+    edges
 }
 
 fn state_color(state: &str) -> egui::Color32 {
@@ -224,6 +278,14 @@ mod tests {
         assert_eq!(share(50, 200), 25.0);
         assert_eq!(share(200, 200), 100.0);
         assert_eq!(share(1, 0), 0.0);
+    }
+
+    #[test]
+    fn bar_edges_end_at_full_width() {
+        assert_eq!(bar_edges(&[50, 50], 100, 200.0), vec![0.0, 100.0, 200.0]);
+        assert_eq!(bar_edges(&[0, 100], 100, 200.0), vec![0.0, 0.0, 200.0]);
+        assert_eq!(bar_edges(&[1, 2], 3, 300.0), vec![0.0, 100.0, 300.0]);
+        assert_eq!(bar_edges(&[5], 5, 123.5), vec![0.0, 123.5]);
     }
 
     #[test]
